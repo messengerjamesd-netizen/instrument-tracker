@@ -1,0 +1,38 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+
+# Installer output (upload manually as release asset)
+installer_output/
+
+# Runtime data files (per-machine, not source)
+band_tracker.db
+band_tracker_config.json
+*.db
+*.db-journal
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Captured photos (user data)
+captured_photos/
+
+# Captured photos and logs (user data)
+contract_photos/
+captured_photos/
+camera.log
+
+# Preview/test PDFs
+qr_preview.pdf
+qr_preview_avery.pdf
+
+# Claude Code project settings
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
