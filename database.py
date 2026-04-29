@@ -412,6 +412,19 @@ def get_student_history(student_db_id):
         """, (student_db_id,)).fetchall()
 
 
+def get_recent_activity(limit=5):
+    with get_connection() as conn:
+        return conn.execute("""
+            SELECT h.*, i.name AS instrument_name, i.serial_number,
+                   s.name AS student_name
+            FROM checkout_history h
+            LEFT JOIN instruments i ON h.instrument_id = i.id
+            LEFT JOIN students s ON h.student_id = s.id
+            ORDER BY h.timestamp DESC
+            LIMIT ?
+        """, (limit,)).fetchall()
+
+
 def get_instrument_history(instrument_db_id):
     with get_connection() as conn:
         return conn.execute("""

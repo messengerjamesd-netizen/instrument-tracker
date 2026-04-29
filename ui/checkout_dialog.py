@@ -5,7 +5,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSizePolicy, QFrame, QDialogButtonBox, QPlainTextEdit,
-    QFileDialog,
+    QFileDialog, QCompleter,
 )
 import database as db
 from ui.camera_dialog import PhotoCaptureDialog
@@ -50,9 +50,16 @@ class CheckoutDialog(QDialog):
         s_lbl.setMinimumWidth(130)
         self.student_combo = QComboBox()
         self.student_combo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.student_combo.setEditable(True)
+        self.student_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.student_combo.lineEdit().setPlaceholderText("Type to search students…")
         students = db.get_all_students()
         for s in students:
             self.student_combo.addItem(f"{s['name']} ({s['student_id']})", s["id"])
+        completer = QCompleter([f"{s['name']} ({s['student_id']})" for s in students])
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.student_combo.setCompleter(completer)
         s_row.addWidget(s_lbl)
         s_row.addWidget(self.student_combo)
         layout.addLayout(s_row)

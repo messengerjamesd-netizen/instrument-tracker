@@ -3,7 +3,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QFileDialog, QMessageBox, QDialog, QSizePolicy,
+    QFrame, QFileDialog, QMessageBox, QDialog, QSizePolicy,
 )
 from PySide6.QtGui import QTextDocument, QPageLayout
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
@@ -126,38 +126,71 @@ class ReportsTab(QWidget):
     def _build_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(16)
+        layout.setSpacing(0)
 
         title = QLabel("Reports")
         title.setObjectName("section_title")
         layout.addWidget(title)
+        layout.addSpacing(16)
 
-        layout.addWidget(self._build_export_group())
-        layout.addWidget(self._build_print_group())
-        layout.addWidget(self._build_qr_group())
+        self._add_section(layout, "Export Data")
+        export_row = QHBoxLayout()
+        export_row.setSpacing(10)
+        instr_btn = QPushButton("🎺  Export Instruments")
+        instr_btn.setMinimumHeight(46)
+        instr_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        instr_btn.clicked.connect(self._export_instruments)
+        stu_btn = QPushButton("🎓  Export Students")
+        stu_btn.setMinimumHeight(46)
+        stu_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        stu_btn.clicked.connect(self._export_students)
+        export_row.addWidget(instr_btn)
+        export_row.addWidget(stu_btn)
+        export_row.addStretch()
+        layout.addLayout(export_row)
+        layout.addSpacing(20)
+
+        self._add_section(layout, "Print Reports")
+        reports = [
+            ("📋", "Current Checkouts", "current_checkouts"),
+            ("📦", "Full Inventory",    "full_inventory"),
+            ("🔧", "Needs Repair",      "needs_repair"),
+            ("✅", "Available",         "available"),
+            ("🏠", "Summer Hold",       "summer_hold"),
+        ]
+        for icon, label, key in reports:
+            btn = QPushButton(f"{icon}  {label}")
+            btn.setMinimumHeight(46)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.clicked.connect(lambda _, k=key: self._print_report(k))
+            layout.addWidget(btn)
+            layout.addSpacing(6)
+        layout.addSpacing(14)
+
+        self._add_section(layout, "QR Codes")
+        qr_btn = QPushButton("▦  Print QR Labels")
+        qr_btn.setMinimumHeight(46)
+        qr_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        qr_btn.clicked.connect(self._open_qr_labels)
+        layout.addWidget(qr_btn)
+
         layout.addStretch()
 
-    # ── Export Data ───────────────────────────────────────────────────────────
-
-    def _build_export_group(self):
-        group = QGroupBox("Export Data")
-        h = QHBoxLayout(group)
-        h.setSpacing(10)
-
-        instr_btn = QPushButton("🎺  Export Instruments")
-        instr_btn.setMinimumHeight(52)
-        instr_btn.setMinimumWidth(160)
-        instr_btn.clicked.connect(self._export_instruments)
-        h.addWidget(instr_btn)
-
-        stu_btn = QPushButton("🎓  Export Students")
-        stu_btn.setMinimumHeight(52)
-        stu_btn.setMinimumWidth(160)
-        stu_btn.clicked.connect(self._export_students)
-        h.addWidget(stu_btn)
-
-        h.addStretch()
-        return group
+    def _add_section(self, layout, title):
+        """Add a divider-line section header."""
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        lbl = QLabel(title)
+        lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #8aaad0; text-transform: uppercase; letter-spacing: 1px;")
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Plain)
+        line.setStyleSheet("color: #1a3666;")
+        line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        row.addWidget(lbl)
+        row.addWidget(line)
+        layout.addLayout(row)
+        layout.addSpacing(10)
 
     def _export_instruments(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -183,50 +216,10 @@ class ReportsTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
 
-    # ── Print Reports ─────────────────────────────────────────────────────────
-
-    def _build_print_group(self):
-        group = QGroupBox("Print Reports")
-        h = QHBoxLayout(group)
-        h.setSpacing(10)
-
-        reports = [
-            ("📋", "Current Checkouts", "current_checkouts"),
-            ("📦", "Full Inventory", "full_inventory"),
-            ("🔧", "Needs Repair", "needs_repair"),
-            ("✅", "Available", "available"),
-            ("🏠", "Summer Hold", "summer_hold"),
-        ]
-        for icon, label, key in reports:
-            btn = QPushButton(f"{icon}  {label}")
-            btn.setMinimumHeight(52)
-            btn.setMinimumWidth(140)
-            btn.clicked.connect(lambda _, k=key: self._print_report(k))
-            h.addWidget(btn)
-
-        h.addStretch()
-        return group
-
     def _print_report(self, key):
         html = _build_html(key)
         if html:
             _print_html(html, self)
-
-    # ── QR Labels ─────────────────────────────────────────────────────────────
-
-    def _build_qr_group(self):
-        group = QGroupBox("QR Codes")
-        h = QHBoxLayout(group)
-        h.setSpacing(10)
-
-        qr_btn = QPushButton("▦  Print QR Labels")
-        qr_btn.setMinimumHeight(52)
-        qr_btn.setMinimumWidth(160)
-        qr_btn.clicked.connect(self._open_qr_labels)
-        h.addWidget(qr_btn)
-
-        h.addStretch()
-        return group
 
     def _open_qr_labels(self):
         from ui.qr_codes_tab import QRCodesTab
