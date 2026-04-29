@@ -262,36 +262,47 @@ class ActionsTab(QWidget):
         mode_label.setStyleSheet("font-size: 13px; color: #8aaad0;")
         inner_layout.addWidget(mode_label)
 
-        toggle_row = QHBoxLayout()
-        toggle_row.setSpacing(0)
+        toggle_frame = QFrame()
+        toggle_frame.setStyleSheet(
+            "QFrame { border: 1px solid #1a3666; border-radius: 6px; }"
+        )
+        toggle_frame.setFixedHeight(44)
+        toggle_layout = QHBoxLayout(toggle_frame)
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        toggle_layout.setSpacing(0)
 
         self._btn_camera  = QPushButton("📷  Camera")
         self._btn_scanner = QPushButton("⌨️  Type Manually / External Scanner")
 
+        btn_style = """
+            QPushButton {{
+                font-size: 14px; font-weight: bold;
+                background: #0f2040; color: #8aaad0;
+                border: none;
+                border-radius: 0px;
+            }}
+            QPushButton:checked {{
+                background: #1a4a8a; color: #ffffff;
+            }}
+        """
+        self._btn_camera.setStyleSheet(
+            btn_style + "QPushButton { border-radius: 5px 0 0 5px; }"
+        )
+        self._btn_scanner.setStyleSheet(
+            btn_style + "QPushButton { border-radius: 0 5px 5px 0; }"
+        )
+
         for btn in (self._btn_camera, self._btn_scanner):
             btn.setCheckable(True)
-            btn.setMinimumHeight(44)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setStyleSheet("""
-                QPushButton {
-                    font-size: 14px; font-weight: bold;
-                    background: #0f2040; color: #8aaad0;
-                    border: 1px solid #1a3666;
-                }
-                QPushButton:checked {
-                    background: #1a4a8a; color: #ffffff;
-                    border: 1px solid #2d6bc4;
-                }
-                QPushButton:first-child { border-radius: 6px 0 0 6px; }
-                QPushButton:last-child  { border-radius: 0 6px 6px 0; }
-            """)
-            toggle_row.addWidget(btn, 1)
+            btn.setMinimumWidth(0)
+            btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+            toggle_layout.addWidget(btn, 1)
 
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self._btn_camera, 0)
         self._mode_group.addButton(self._btn_scanner, 1)
         self._btn_camera.setChecked(True)
-        inner_layout.addLayout(toggle_row)
+        inner_layout.addWidget(toggle_frame)
 
         # Card buttons (Check Out / Check In)
         cards_row = QHBoxLayout()
