@@ -258,6 +258,7 @@ class OptionsTab(QWidget):
         btn_row.addWidget(backup_btn)
 
         restore_btn = QPushButton("📂  Restore from Backup")
+        restore_btn.setObjectName("danger")
         restore_btn.setMinimumHeight(36)
         restore_btn.clicked.connect(self._restore)
         btn_row.addWidget(restore_btn)
@@ -287,6 +288,22 @@ class OptionsTab(QWidget):
             QMessageBox.critical(self, "Backup Failed", str(e))
 
     def _restore(self):
+        warning = QMessageBox(self)
+        warning.setWindowTitle("⚠️  Restore from Backup")
+        warning.setIcon(QMessageBox.Critical)
+        warning.setText("<b>This will permanently erase all your current data.</b>")
+        warning.setInformativeText(
+            "Restoring a backup replaces everything in the app right now — "
+            "all instruments, students, contracts, and history — with whatever "
+            "is in the backup file.\n\n"
+            "This cannot be undone. Make sure you have selected the right backup file.\n\n"
+            "Do you want to continue?"
+        )
+        warning.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        warning.setDefaultButton(QMessageBox.No)
+        if warning.exec() != QMessageBox.Yes:
+            return
+
         path, _ = QFileDialog.getOpenFileName(
             self, "Select Backup File", "", "Zip Files (*.zip)"
         )
@@ -302,15 +319,6 @@ class OptionsTab(QWidget):
                     return
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Could not read zip file:\n{e}")
-            return
-
-        reply = QMessageBox.warning(
-            self, "Confirm Restore",
-            "This will replace your current database with the backup.\n\n"
-            "All current data will be overwritten. This cannot be undone.\n\nContinue?",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply != QMessageBox.Yes:
             return
 
         try:

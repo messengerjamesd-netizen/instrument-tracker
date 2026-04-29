@@ -2,7 +2,7 @@ import csv
 import os
 
 from PySide6.QtCore import Qt, Signal, QEvent
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -21,7 +21,22 @@ STATUSES = ["Available", "Checked Out", "Needs Repair", "Out for Repair", "Summe
 REPAIR_STATUSES = {"Needs Repair", "Out for Repair"}
 
 
-# ── Spreadsheet reader ────────────────────────────────────────────────────────
+# ── Spreadsheet helpers ───────────────────────────────────────────────────────
+
+import re as _re
+
+def _norm(s):
+    return _re.sub(r"[^a-z0-9]", "", s.lower())
+
+def _find_col(row, *aliases):
+    """Return the value for the first key in row that fuzzy-matches any alias."""
+    norm_row = {_norm(k): v for k, v in row.items()}
+    for alias in aliases:
+        val = norm_row.get(_norm(alias))
+        if val is not None:
+            return (val or "").strip()
+    return ""
+
 
 def _read_spreadsheet(path):
     """Return list of dicts from CSV/TSV/XLSX/XLS/ODS. First row = headers."""
@@ -323,6 +338,130 @@ class BulkChangeStatusDialog(QDialog):
         return self.repair_notes.toPlainText().strip()
 
 
+# ── Repair return dialog ──────────────────────────────────────────────────────
+
+class RepairReturnDialog(QDialog):
+    """Confirm return from repair with optional invoice attachment and notes."""
+
+    def __init__(self, instrument, parent=None):
+        super().__init__(parent)
+        self.invoice_path = ""
+        self.notes = ""
+
+        name = instrument["name"]
+        serial = instrument["serial_number"] or "no serial"
+        self.setWindowTitle(f"Return from Repair — {name}")
+        self.setMinimumWidth(480)
+        self._build_ui(name, serial)
+
+    def _build_ui(self, name, serial):
+        from ui.camera_dialog import PhotoCaptureDialog
+        self._PhotoCaptureDialog = PhotoCaptureDialog
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        hdr = QLabel(f"<b>{name}</b>  <span style='color:#5a7aaa'>({serial})</span>")
+        hdr.setStyleSheet("font-size: 15px;")
+        layout.addWidget(hdr)
+
+        layout.addWidget(self._sep())
+
+        layout.addWidget(QLabel("Repair invoice / work slip (optional):"))
+
+        inv_row = QHBoxLayout()
+        self.inv_thumb = self._make_thumb()
+        inv_btns = QVBoxLayout()
+        inv_btns.setSpacing(4)
+        cam_btn = QPushButton("📷  Photograph Invoice")
+        cam_btn.setMinimumHeight(34)
+        cam_btn.clicked.connect(self._take_photo)
+        upload_btn = QPushButton("📁  Upload Invoice File")
+        upload_btn.setMinimumHeight(34)
+        upload_btn.clicked.connect(self._upload_file)
+        inv_btns.addWidget(cam_btn)
+        inv_btns.addWidget(upload_btn)
+        clear_btn = QPushButton("Clear")
+        clear_btn.clicked.connect(self._clear)
+        inv_row.addWidget(self.inv_thumb)
+        inv_row.addLayout(inv_btns)
+        inv_row.addWidget(clear_btn)
+        layout.addLayout(inv_row)
+
+        layout.addWidget(self._sep())
+
+        layout.addWidget(QLabel("Repair notes:"))
+        self.notes_edit = QPlainTextEdit()
+        self.notes_edit.setPlaceholderText("What was repaired, cost, shop name, etc…")
+        self.notes_edit.setFixedHeight(70)
+        layout.addWidget(self.notes_edit)
+
+        layout.addWidget(self._sep())
+
+        btns = QDialogButtonBox()
+        confirm_btn = btns.addButton("Mark Returned", QDialogButtonBox.AcceptRole)
+        confirm_btn.setObjectName("primary")
+        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
+        btns.accepted.connect(self._confirm)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _sep(self):
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        return line
+
+    def _make_thumb(self):
+        lbl = QLabel()
+        lbl.setFixedSize(80, 60)
+        lbl.setStyleSheet(
+            "background:#0f2040; border:1px solid #1a3666; border-radius:4px;"
+        )
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setText("—")
+        return lbl
+
+    def _take_photo(self):
+        dlg = self._PhotoCaptureDialog(self)
+        if dlg.exec() == QDialog.Accepted and dlg.captured_path:
+            self.invoice_path = dlg.captured_path
+            self._set_thumb(self.inv_thumb, dlg.captured_path)
+
+    def _upload_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Invoice File", "",
+            "Images & PDFs (*.png *.jpg *.jpeg *.bmp *.tiff *.pdf);;All Files (*)"
+        )
+        if not path:
+            return
+        self.invoice_path = path
+        if path.lower().endswith(".pdf"):
+            self.inv_thumb.setPixmap(QPixmap())
+            self.inv_thumb.setText("PDF")
+        else:
+            self._set_thumb(self.inv_thumb, path)
+
+    def _clear(self):
+        self.invoice_path = ""
+        self.inv_thumb.setPixmap(QPixmap())
+        self.inv_thumb.setText("—")
+
+    def _set_thumb(self, label, path):
+        pix = QPixmap(path).scaled(
+            label.width(), label.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        label.setPixmap(pix)
+        label.setText("")
+
+    def _confirm(self):
+        self.notes = self.notes_edit.toPlainText().strip()
+        self.accept()
+
+
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class InstrumentsPage(QWidget):
@@ -360,6 +499,11 @@ class InstrumentsPage(QWidget):
         self.search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_box.textChanged.connect(lambda _: self._apply_filter())
         toolbar.addWidget(self.search_box)
+
+        self.invoice_filter_cb = QCheckBox("Has Repair Invoice")
+        self.invoice_filter_cb.stateChanged.connect(lambda _: self._apply_filter())
+        toolbar.addSpacing(8)
+        toolbar.addWidget(self.invoice_filter_cb)
 
         toolbar.addSpacing(12)
         import_btn = QPushButton("Import Spreadsheet")
@@ -401,6 +545,7 @@ class InstrumentsPage(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_details)
         self.table.cellClicked.connect(self._on_cell_clicked)
@@ -414,7 +559,7 @@ class InstrumentsPage(QWidget):
         layout.addWidget(self.table)
 
         # Hint + row count
-        hint = QLabel("Tip: Double-click a row to view full history and contracts.")
+        hint = QLabel("Tip: Double-click a row to view full history and contracts. Ctrl+click or Shift+click to select multiple for bulk delete.")
         hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
         layout.addWidget(hint)
 
@@ -523,6 +668,7 @@ class InstrumentsPage(QWidget):
     def _apply_filter(self):
         status = self.status_filter.currentData()
         text = self.search_box.text().lower()
+        invoice_only = self.invoice_filter_cb.isChecked()
         filtered = self._data
         if status:
             filtered = [i for i in filtered if (i["status"] or "") == status]
@@ -535,6 +681,9 @@ class InstrumentsPage(QWidget):
                                i["qr_code_text"], i["student_name"]]
                 )
             ]
+        if invoice_only:
+            ids = db.get_instrument_ids_with_repair_invoices()
+            filtered = [i for i in filtered if i["id"] in ids]
         self._populate(filtered)
 
     def _selected_instrument_id(self):
@@ -543,6 +692,15 @@ class InstrumentsPage(QWidget):
             return None
         item = self.table.item(row, 0)
         return item.data(Qt.UserRole) if item else None
+
+    def _selected_instrument_ids(self):
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        ids = []
+        for row in sorted(rows):
+            item = self.table.item(row, 0)
+            if item:
+                ids.append(item.data(Qt.UserRole))
+        return ids
 
     # ── Sort memory ───────────────────────────────────────────────────────────
 
@@ -646,11 +804,17 @@ class InstrumentsPage(QWidget):
             if not self._do_checkout(instr):
                 return
         elif new_status == "Available":
-            ci_dlg = CheckinDialog(instr, self)
-            if ci_dlg.exec() != QDialog.Accepted:
-                return
-            db.checkin_instrument(iid, notes=ci_dlg.notes,
-                                  condition_photo_path=ci_dlg.condition_photo_path)
+            if instr["status"] in REPAIR_STATUSES:
+                ret_dlg = RepairReturnDialog(instr, self)
+                if ret_dlg.exec() != QDialog.Accepted:
+                    return
+                db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+            else:
+                ci_dlg = CheckinDialog(instr, self)
+                if ci_dlg.exec() != QDialog.Accepted:
+                    return
+                db.checkin_instrument(iid, notes=ci_dlg.notes,
+                                      condition_photo_path=ci_dlg.condition_photo_path)
         elif new_status == "Summer Hold":
             if not self._do_summer_hold(instr):
                 return
@@ -751,9 +915,14 @@ class InstrumentsPage(QWidget):
         added, skipped = 0, 0
         with db.get_connection() as conn:
             for row in rows:
-                name = row.get("Name", "").strip()
-                model = row.get("Model", "").strip()
-                serial = row.get("Serial Number", "").strip()
+                name = _find_col(row,
+                    "Name", "Instrument", "Instrument Name", "Item",
+                    "Description", "Type", "Instrument Type")
+                model = _find_col(row,
+                    "Model", "Make", "Make/Model", "Manufacturer", "Brand")
+                serial = _find_col(row,
+                    "Serial Number", "Serial", "Serial #", "Serial No",
+                    "Serial No.", "SN", "S/N", "Serial_Number", "SerialNumber")
                 if not name:
                     skipped += 1
                     continue
@@ -810,14 +979,20 @@ class InstrumentsPage(QWidget):
                 return
 
         elif new_status == "Available":
-            ci_dlg = CheckinDialog(instr, self)
-            if ci_dlg.exec() != QDialog.Accepted:
-                return
-            db.checkin_instrument(
-                iid,
-                notes=ci_dlg.notes,
-                condition_photo_path=ci_dlg.condition_photo_path,
-            )
+            if instr["status"] in REPAIR_STATUSES:
+                ret_dlg = RepairReturnDialog(instr, self)
+                if ret_dlg.exec() != QDialog.Accepted:
+                    return
+                db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+            else:
+                ci_dlg = CheckinDialog(instr, self)
+                if ci_dlg.exec() != QDialog.Accepted:
+                    return
+                db.checkin_instrument(
+                    iid,
+                    notes=ci_dlg.notes,
+                    condition_photo_path=ci_dlg.condition_photo_path,
+                )
 
         elif new_status == "Summer Hold":
             if not self._do_summer_hold(instr):
@@ -831,21 +1006,29 @@ class InstrumentsPage(QWidget):
         self.refresh()
 
     def _delete_instrument(self):
-        iid = self._selected_instrument_id()
-        if iid is None:
-            QMessageBox.information(self, "No Selection", "Select an instrument first.")
+        iids = self._selected_instrument_ids()
+        if not iids:
+            QMessageBox.information(self, "No Selection", "Select one or more instruments first.")
             return
-        instr = db.get_instrument_by_id(iid)
-        if not instr:
-            return
-        reply = QMessageBox.warning(
-            self, "Confirm Delete",
-            f"Delete {instr['name']} ({instr['serial_number'] or 'no serial'})?\n\n"
-            "This will also delete all checkout history for this instrument.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
+        if len(iids) == 1:
+            instr = db.get_instrument_by_id(iids[0])
+            if not instr:
+                return
+            msg = (f"Delete {instr['name']} ({instr['serial_number'] or 'no serial'})?\n\n"
+                   "This will also delete all checkout history for this instrument.")
+        else:
+            instrs = [db.get_instrument_by_id(i) for i in iids]
+            names = "\n".join(
+                f"  • {i['name']} ({i['serial_number'] or 'no serial'})"
+                for i in instrs if i
+            )
+            msg = (f"Delete {len(iids)} instruments?\n\n{names}\n\n"
+                   "This will also delete all checkout history for these instruments.")
+        reply = QMessageBox.warning(self, "Confirm Delete", msg,
+                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            db.delete_instrument(iid)
+            for iid in iids:
+                db.delete_instrument(iid)
             self.refresh()
 
     def _on_cell_hovered(self, row, col):

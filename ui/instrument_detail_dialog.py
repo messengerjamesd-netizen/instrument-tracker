@@ -136,8 +136,12 @@ class InstrumentDetailDialog(QDialog):
         self.view_cont_btn = QPushButton("View Contract Photo")
         self.view_cont_btn.setEnabled(False)
         self.view_cont_btn.clicked.connect(self._view_contract_photo)
+        self.view_inv_btn = QPushButton("View Repair Invoice")
+        self.view_inv_btn.setEnabled(False)
+        self.view_inv_btn.clicked.connect(self._view_repair_invoice)
         btn_row.addWidget(self.view_cond_btn)
         btn_row.addWidget(self.view_cont_btn)
+        btn_row.addWidget(self.view_inv_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -147,16 +151,26 @@ class InstrumentDetailDialog(QDialog):
     def _load_history(self):
         records = db.get_instrument_history(self.instrument_id)
         self.history_table.setRowCount(len(records))
+        action_map = {
+            "check_out":       "Check Out",
+            "check_in":        "Check In",
+            "needs_repair":    "Needs Repair",
+            "out_for_repair":  "Out for Repair",
+            "repair_returned": "Returned from Repair",
+        }
         for row, r in enumerate(records):
-            action_label = "Check Out" if r["action"] == "check_out" else "Check In"
+            action_label = action_map.get(r["action"], r["action"])
 
             cond = r["condition_photo_path"] or ""
             cont = r["contract_photo_path"] or ""
+            inv  = r["repair_invoice_path"] or ""
             photo_flags = []
             if cond and os.path.exists(cond):
                 photo_flags.append("Condition")
             if cont and os.path.exists(cont):
                 photo_flags.append("Contract")
+            if inv and os.path.exists(inv):
+                photo_flags.append("Invoice")
             photo_label = ", ".join(photo_flags) if photo_flags else "—"
 
             vals = [
@@ -177,12 +191,15 @@ class InstrumentDetailDialog(QDialog):
         if row < 0:
             self.view_cond_btn.setEnabled(False)
             self.view_cont_btn.setEnabled(False)
+            self.view_inv_btn.setEnabled(False)
             return
         data = self.history_table.item(row, 0).data(Qt.UserRole)
         cond = data.get("condition_photo_path") or ""
         cont = data.get("contract_photo_path") or ""
+        inv  = data.get("repair_invoice_path") or ""
         self.view_cond_btn.setEnabled(bool(cond and os.path.exists(cond)))
         self.view_cont_btn.setEnabled(bool(cont and os.path.exists(cont)))
+        self.view_inv_btn.setEnabled(bool(inv and os.path.exists(inv)))
 
     def _view_condition_photo(self):
         row = self.history_table.currentRow()
@@ -203,6 +220,19 @@ class InstrumentDetailDialog(QDialog):
         if path and os.path.exists(path):
             dlg = PhotoPreviewDialog(path, "Contract Photo", self)
             dlg.exec()
+
+    def _view_repair_invoice(self):
+        row = self.history_table.currentRow()
+        if row < 0:
+            return
+        data = self.history_table.item(row, 0).data(Qt.UserRole)
+        path = data.get("repair_invoice_path") or ""
+        if path and os.path.exists(path):
+            if path.lower().endswith(".pdf"):
+                _open_file(path)
+            else:
+                dlg = PhotoPreviewDialog(path, "Repair Invoice", self)
+                dlg.exec()
 
     # ── Contracts tab ─────────────────────────────────────────────────────────
 

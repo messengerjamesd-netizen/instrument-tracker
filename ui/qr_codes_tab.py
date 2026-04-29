@@ -3,7 +3,7 @@ import io
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QScrollArea,
-    QFrame, QComboBox,
+    QFrame, QComboBox,  # QComboBox kept for format_combo and columns_combo
 )
 from PySide6.QtCore import Qt
 
@@ -54,15 +54,6 @@ class QRCodesTab(QWidget):
         ])
         self.format_combo.currentIndexChanged.connect(self._on_format_changed)
         h.addWidget(self.format_combo)
-
-        h.addSpacing(24)
-        h.addWidget(QLabel("QR Content:"))
-        self.qr_content_combo = QComboBox()
-        self.qr_content_combo.addItems([
-            "QR Code Text field (falls back to Serial Number)",
-            "Serial Number only",
-        ])
-        h.addWidget(self.qr_content_combo)
 
         h.addSpacing(24)
         self.cols_label = QLabel("Columns per page:")
@@ -153,8 +144,6 @@ class QRCodesTab(QWidget):
             cb.setChecked(False)
 
     def _qr_text_for(self, instr):
-        if self.qr_content_combo.currentIndex() == 0:
-            return instr["qr_code_text"] or instr["serial_number"] or str(instr["id"])
         return instr["serial_number"] or instr["qr_code_text"] or str(instr["id"])
 
     def _export_pdf(self):

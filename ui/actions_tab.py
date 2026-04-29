@@ -3,7 +3,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDialog, QMessageBox, QSizePolicy, QFrame, QDialogButtonBox,
-    QPlainTextEdit, QLineEdit, QCheckBox,
+    QPlainTextEdit, QLineEdit, QButtonGroup,
 )
 import database as db
 from ui.camera_dialog import CameraDialog, PhotoCaptureDialog
@@ -161,14 +161,45 @@ class ActionsTab(QWidget):
         title.setObjectName("section_title")
         outer.addWidget(title)
 
-        self.scanner_toggle = QCheckBox("Use external QR scanner or manual entry")
-        self.scanner_toggle.setStyleSheet("""
-            QCheckBox { font-size: 14px; color: #c8d8f0; spacing: 10px; }
-            QCheckBox::indicator { width: 20px; height: 20px; }
-        """)
-        outer.addWidget(self.scanner_toggle)
+        # Input mode toggle
+        mode_label = QLabel("How are you scanning?")
+        mode_label.setStyleSheet("font-size: 13px; color: #8aaad0;")
+        outer.addWidget(mode_label)
 
-        checkout_btn = QPushButton("  Scan QR — Check Out Instrument")
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(0)
+
+        self._btn_camera = QPushButton("📷  Camera")
+        self._btn_scanner = QPushButton("⌨️  Type Manually / External Scanner")
+
+        for btn in (self._btn_camera, self._btn_scanner):
+            btn.setCheckable(True)
+            btn.setMinimumHeight(44)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setStyleSheet("""
+                QPushButton {
+                    font-size: 14px; font-weight: bold;
+                    background: #0f2040; color: #8aaad0;
+                    border: 1px solid #1a3666;
+                }
+                QPushButton:checked {
+                    background: #1a4a8a; color: #ffffff;
+                    border: 1px solid #2d6bc4;
+                }
+                QPushButton:first-child { border-radius: 6px 0 0 6px; }
+                QPushButton:last-child  { border-radius: 0 6px 6px 0; }
+            """)
+            toggle_row.addWidget(btn)
+
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.addButton(self._btn_camera, 0)
+        self._mode_group.addButton(self._btn_scanner, 1)
+        self._btn_camera.setChecked(True)
+
+        outer.addLayout(toggle_row)
+        outer.addSpacing(8)
+
+        checkout_btn = QPushButton("  Check Out Instrument")
         checkout_btn.setObjectName("primary")
         checkout_btn.setMinimumHeight(52)
         checkout_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -178,7 +209,7 @@ class ActionsTab(QWidget):
         checkout_btn.clicked.connect(self._checkout)
         outer.addWidget(checkout_btn)
 
-        checkin_btn = QPushButton("  Scan QR — Check In Instrument")
+        checkin_btn = QPushButton("  Check In Instrument")
         checkin_btn.setMinimumHeight(52)
         checkin_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         checkin_btn.setStyleSheet(
@@ -190,8 +221,7 @@ class ActionsTab(QWidget):
         outer.addStretch()
 
     def _get_qr_code(self, title):
-        """Open either the camera dialog or scanner input depending on the toggle."""
-        if self.scanner_toggle.isChecked():
+        if self._mode_group.checkedId() == 1:
             dlg = ScannerInputDialog(title, self)
         else:
             dlg = CameraDialog(self, title)

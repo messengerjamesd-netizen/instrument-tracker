@@ -52,7 +52,8 @@ def initialize_db():
                 timestamp TEXT NOT NULL,
                 notes TEXT,
                 condition_photo_path TEXT,
-                contract_photo_path TEXT
+                contract_photo_path TEXT,
+                repair_invoice_path TEXT
             );
 
             CREATE TABLE IF NOT EXISTS contracts (
@@ -71,6 +72,8 @@ def initialize_db():
             conn.execute("ALTER TABLE checkout_history ADD COLUMN condition_photo_path TEXT")
         if "contract_photo_path" not in cols:
             conn.execute("ALTER TABLE checkout_history ADD COLUMN contract_photo_path TEXT")
+        if "repair_invoice_path" not in cols:
+            conn.execute("ALTER TABLE checkout_history ADD COLUMN repair_invoice_path TEXT")
 
 
 # ── Students ──────────────────────────────────────────────────────────────────
@@ -333,6 +336,30 @@ def log_repair_note(instrument_db_id, status, notes):
             "VALUES (?, NULL, ?, ?, ?)",
             (instrument_db_id, action, now, notes),
         )
+
+
+def log_repair_return(instrument_db_id, notes="", invoice_path=""):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE instruments SET status='Available', current_student_id=NULL WHERE id=?",
+            (instrument_db_id,),
+        )
+        conn.execute(
+            "INSERT INTO checkout_history "
+            "(instrument_id, student_id, action, timestamp, notes, repair_invoice_path) "
+            "VALUES (?, NULL, 'repair_returned', ?, ?, ?)",
+            (instrument_db_id, now, notes or None, invoice_path or None),
+        )
+
+
+def get_instrument_ids_with_repair_invoices():
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT instrument_id FROM checkout_history "
+            "WHERE repair_invoice_path IS NOT NULL AND repair_invoice_path != ''"
+        ).fetchall()
+        return {r["instrument_id"] for r in rows}
 
 
 def import_instruments_from_csv(filepath):

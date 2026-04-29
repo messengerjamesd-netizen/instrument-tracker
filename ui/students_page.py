@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 import database as db
 import config as cfg
 from ui.student_detail_dialog import StudentDetailDialog
-from ui.instruments_page import _read_spreadsheet
+from ui.instruments_page import _read_spreadsheet, _find_col
 
 
 # ── Dialogs ───────────────────────────────────────────────────────────────────
@@ -147,6 +147,7 @@ class StudentsPage(QWidget):
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_history)
         self.table.cellClicked.connect(self._on_cell_clicked)
@@ -158,7 +159,7 @@ class StudentsPage(QWidget):
         layout.addWidget(self.table)
 
         # Hint + row count
-        hint = QLabel("Tip: Double-click a row to view a student's full instrument history.")
+        hint = QLabel("Tip: Double-click a row to view a student's full instrument history. Ctrl+click or Shift+click to select multiple for bulk delete.")
         hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
         layout.addWidget(hint)
 
@@ -321,6 +322,15 @@ class StudentsPage(QWidget):
         item = self.table.item(row, 0)
         return item.data(Qt.UserRole) if item else None
 
+    def _selected_student_ids(self):
+        rows = {idx.row() for idx in self.table.selectedIndexes()}
+        ids = []
+        for row in sorted(rows):
+            item = self.table.item(row, 0)
+            if item:
+                ids.append(item.data(Qt.UserRole))
+        return ids
+
     # ── Sort memory ───────────────────────────────────────────────────────────
 
     def _on_header_clicked(self, col):
@@ -373,9 +383,14 @@ class StudentsPage(QWidget):
         added, skipped = 0, 0
         with db.get_connection() as conn:
             for row in rows:
-                name = row.get("Name", "").strip()
-                sid = row.get("Student ID", "").strip()
-                grade = row.get("Grade", "").strip()
+                name = _find_col(row,
+                    "Name", "Student Name", "Full Name", "Student",
+                    "Last Name", "First Name")
+                sid = _find_col(row,
+                    "Student ID", "Student #", "Student No", "Student Number",
+                    "ID", "ID Number", "StudentID", "Student_ID")
+                grade = _find_col(row,
+                    "Grade", "Grade Level", "Year", "Class", "Grade/Year")
                 if not name or not sid:
                     skipped += 1
                     continue
@@ -424,19 +439,27 @@ class StudentsPage(QWidget):
         dlg.exec()
 
     def _delete_student(self):
-        sid = self._selected_student_id()
-        if sid is None:
-            QMessageBox.information(self, "No Selection", "Select a student first.")
+        sids = self._selected_student_ids()
+        if not sids:
+            QMessageBox.information(self, "No Selection", "Select one or more students first.")
             return
-        student = db.get_student_by_id(sid)
-        if not student:
-            return
-        reply = QMessageBox.warning(
-            self, "Confirm Delete",
-            f"Delete student {student['name']} ({student['student_id']})?\n\n"
-            "This will also delete all their contracts.",
-            QMessageBox.Yes | QMessageBox.No,
-        )
+        if len(sids) == 1:
+            student = db.get_student_by_id(sids[0])
+            if not student:
+                return
+            msg = (f"Delete student {student['name']} ({student['student_id']})?\n\n"
+                   "This will also delete all their contracts.")
+        else:
+            students = [db.get_student_by_id(s) for s in sids]
+            names = "\n".join(
+                f"  • {s['name']} ({s['student_id']})"
+                for s in students if s
+            )
+            msg = (f"Delete {len(sids)} students?\n\n{names}\n\n"
+                   "This will also delete all their contracts.")
+        reply = QMessageBox.warning(self, "Confirm Delete", msg,
+                                    QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            db.delete_student(sid)
+            for sid in sids:
+                db.delete_student(sid)
             self.refresh()

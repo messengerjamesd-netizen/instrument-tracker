@@ -91,6 +91,17 @@ def _build_html(key):
                      _table(["Instrument", "Model", "Serial #", "Last Checked In"],
                             data, "No instruments currently available."))
 
+    if key == "summer_hold":
+        rows = db.get_summer_hold_instruments()
+        data = [
+            [r["name"], r["model"] or "—", r["serial_number"] or "—",
+             r["student_name"] or "—"]
+            for r in rows
+        ]
+        return _wrap("Summer Hold — Instruments at Home",
+                     _table(["Instrument", "Model", "Serial #", "Student"],
+                            data, "No instruments currently marked Summer Hold."))
+
     return ""
 
 
@@ -184,6 +195,7 @@ class ReportsTab(QWidget):
             ("📦", "Full Inventory", "full_inventory"),
             ("🔧", "Needs Repair", "needs_repair"),
             ("✅", "Available", "available"),
+            ("🏠", "Summer Hold", "summer_hold"),
         ]
         for icon, label, key in reports:
             btn = QPushButton(f"{icon}  {label}")
