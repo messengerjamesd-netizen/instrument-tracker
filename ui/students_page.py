@@ -246,7 +246,7 @@ class StudentsPage(QWidget):
         shown = len(rows)
         if total == 0:
             self.row_count_label.setText(
-                "No students yet — click + Add Student to get started."
+                "No students yet — click Add Student or Import Spreadsheet to get started."
             )
         elif shown == 0:
             self.row_count_label.setText("No students match your search.")

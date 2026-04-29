@@ -47,7 +47,7 @@ class OptionsTab(QWidget):
         font_row = QHBoxLayout()
         font_row.addWidget(QLabel("Font size:"))
         self._font_btns = {}
-        for key, label in [("small", "Small"), ("medium", "Default"), ("large", "Large")]:
+        for key, label in [("xsmall", "XS"), ("small", "Small"), ("medium", "Default"), ("large", "Large"), ("xlarge", "XL")]:
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setMinimumWidth(80)

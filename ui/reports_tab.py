@@ -134,21 +134,17 @@ class ReportsTab(QWidget):
         layout.addSpacing(16)
 
         self._add_section(layout, "Export Data")
-        export_row = QHBoxLayout()
-        export_row.setSpacing(10)
-        instr_btn = QPushButton("🎺  Export Instruments")
-        instr_btn.setMinimumHeight(46)
-        instr_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        instr_btn.clicked.connect(self._export_instruments)
-        stu_btn = QPushButton("🎓  Export Students")
-        stu_btn.setMinimumHeight(46)
-        stu_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        stu_btn.clicked.connect(self._export_students)
-        export_row.addWidget(instr_btn)
-        export_row.addWidget(stu_btn)
-        export_row.addStretch()
-        layout.addLayout(export_row)
-        layout.addSpacing(20)
+        for label, slot in [
+            ("🎺  Export Instruments", self._export_instruments),
+            ("🎓  Export Students",    self._export_students),
+        ]:
+            btn = QPushButton(label)
+            btn.setMinimumHeight(46)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+            layout.addSpacing(6)
+        layout.addSpacing(14)
 
         self._add_section(layout, "Print Reports")
         reports = [

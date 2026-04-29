@@ -1,8 +1,8 @@
 from PySide6.QtGui import QPalette, QColor
 
-FONT_SIZES = {"small": "11px", "medium": "13px", "large": "16px"}
-_TITLE_SIZES = {"small": "16px", "medium": "20px", "large": "24px"}
-_LABEL_SIZES = {"small": "10px", "medium": "12px", "large": "14px"}
+FONT_SIZES = {"xsmall": "10px", "small": "11px", "medium": "13px", "large": "16px", "xlarge": "19px"}
+_TITLE_SIZES = {"xsmall": "14px", "small": "16px", "medium": "20px", "large": "24px", "xlarge": "28px"}
+_LABEL_SIZES = {"xsmall": "9px", "small": "10px", "medium": "12px", "large": "14px", "xlarge": "16px"}
 
 # ── Color utilities ────────────────────────────────────────────────────────────
 

@@ -285,7 +285,7 @@ class ActionsTab(QWidget):
                 QPushButton:first-child { border-radius: 6px 0 0 6px; }
                 QPushButton:last-child  { border-radius: 0 6px 6px 0; }
             """)
-            toggle_row.addWidget(btn)
+            toggle_row.addWidget(btn, 1)
 
         self._mode_group = QButtonGroup(self)
         self._mode_group.addButton(self._btn_camera, 0)

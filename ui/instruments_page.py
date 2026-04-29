@@ -654,7 +654,7 @@ class InstrumentsPage(QWidget):
         shown = len(rows)
         if total == 0:
             self.row_count_label.setText(
-                "No instruments yet — click + Add Instrument to get started."
+                "No instruments yet — click Add Instrument or Import Spreadsheet to get started."
             )
         elif shown == 0:
             self.row_count_label.setText("No instruments match your filter.")
