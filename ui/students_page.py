@@ -1,4 +1,5 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -89,6 +90,8 @@ class EditStudentDialog(QDialog):
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class StudentsPage(QWidget):
+    navigate_to_instrument = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []
@@ -114,8 +117,12 @@ class StudentsPage(QWidget):
         toolbar.addWidget(self.search_box)
 
         toolbar.addSpacing(12)
-        import_btn = QPushButton("Import CSV / Excel")
+        import_btn = QPushButton("Import Spreadsheet")
         import_btn.setMinimumHeight(32)
+        import_btn.setToolTip(
+            "Expected columns: Name, Student ID, Grade\n"
+            "Supports .csv, .tsv, .xlsx, .xls, .ods"
+        )
         import_btn.clicked.connect(self._import_spreadsheet)
         toolbar.addWidget(import_btn)
 
@@ -129,8 +136,8 @@ class StudentsPage(QWidget):
 
         # Table
         self.table = QTableWidget()
-        self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["ID", "Name", "Student ID", "Grade"])
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["ID", "Name", "Student ID", "Grade", "Instrument"])
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Stretch)
         hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -142,6 +149,12 @@ class StudentsPage(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_history)
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.setMouseTracking(True)
+        self.table.viewport().setMouseTracking(True)
+        self.table.cellEntered.connect(self._on_cell_hovered)
+        self.table.viewport().installEventFilter(self)
+        self._hovered_link_cell = None
         layout.addWidget(self.table)
 
         # Row count
@@ -189,7 +202,7 @@ class StudentsPage(QWidget):
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def refresh(self):
-        self._data = db.get_all_students()
+        self._data = db.get_student_roster()
         self._apply_filter()
         self._restore_sort()
 
@@ -203,6 +216,22 @@ class StudentsPage(QWidget):
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 item.setData(Qt.UserRole, s["id"])
                 self.table.setItem(r, c, item)
+
+            instrument_id = s["instrument_id"] if s["instrument_id"] else None
+            instrument_name = s["instrument_name"] or ""
+            model = s["model"] or ""
+            if instrument_id:
+                label = f"{instrument_name} ({model})" if model else instrument_name
+                instr_item = QTableWidgetItem(label)
+                instr_item.setForeground(QColor("#7eb8f7"))
+                instr_item.setToolTip("Click to view this instrument")
+            else:
+                instr_item = QTableWidgetItem("—")
+            instr_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
+            instr_item.setData(Qt.UserRole, s["id"])
+            instr_item.setData(Qt.UserRole + 1, instrument_id)
+            self.table.setItem(r, 4, instr_item)
+
         self.table.setSortingEnabled(True)
 
         total = len(self._data)
@@ -223,10 +252,54 @@ class StudentsPage(QWidget):
             s for s in self._data
             if any(
                 text in str(v or "").lower()
-                for v in [s["name"], s["student_id"], s["grade"]]
+                for v in [s["name"], s["student_id"], s["grade"], s["instrument_name"]]
             )
         ]
         self._populate(filtered)
+
+    def show_student(self, student_id):
+        self.search_box.clear()
+        self.refresh()
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(Qt.UserRole) == student_id:
+                self.table.selectRow(row)
+                self.table.scrollToItem(item)
+                break
+
+    def _on_cell_hovered(self, row, col):
+        self._clear_link_hover()
+        item = self.table.item(row, col)
+        if col == 4 and item and item.data(Qt.UserRole + 1):
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            self._hovered_link_cell = (row, col)
+
+    def _clear_link_hover(self):
+        if self._hovered_link_cell:
+            r, c = self._hovered_link_cell
+            item = self.table.item(r, c)
+            if item:
+                font = item.font()
+                font.setBold(False)
+                item.setFont(font)
+            self._hovered_link_cell = None
+
+    def eventFilter(self, obj, event):
+        if obj is self.table.viewport() and event.type() == QEvent.Leave:
+            self._clear_link_hover()
+        return super().eventFilter(obj, event)
+
+    def _on_cell_clicked(self, row, col):
+        if col != 4:
+            return
+        item = self.table.item(row, 4)
+        if not item:
+            return
+        instrument_id = item.data(Qt.UserRole + 1)
+        if instrument_id:
+            self.navigate_to_instrument.emit(instrument_id)
 
     def _selected_student_id(self):
         row = self.table.currentRow()

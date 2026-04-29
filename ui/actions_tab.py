@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
 import database as db
 from ui.camera_dialog import CameraDialog, PhotoCaptureDialog
 from ui.checkout_dialog import CheckoutDialog
-from ui.reports_dialog import ReportsDialog
 
 
 class ScannerInputDialog(QDialog):
@@ -33,7 +32,8 @@ class ScannerInputDialog(QDialog):
         self.input.returnPressed.connect(self._on_enter)
         layout.addWidget(self.input)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Cancel)
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._on_enter)
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
@@ -187,29 +187,7 @@ class ActionsTab(QWidget):
         checkin_btn.clicked.connect(self._checkin)
         outer.addWidget(checkin_btn)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setFrameShadow(QFrame.Sunken)
-        outer.addSpacing(16)
-        outer.addWidget(sep)
-        outer.addSpacing(16)
-
-        report_btn = QPushButton("  Print Reports")
-        report_btn.setMinimumHeight(52)
-        report_btn.setStyleSheet(
-            "font-size: 15px; font-weight: bold; text-align: left; padding-left: 20px;"
-        )
-        report_btn.clicked.connect(self._open_reports)
-        report_row = QHBoxLayout()
-        report_row.addWidget(report_btn, 1)
-        report_row.addStretch(2)
-        outer.addLayout(report_row)
-
         outer.addStretch()
-
-    def _open_reports(self):
-        dlg = ReportsDialog(self)
-        dlg.exec()
 
     def _get_qr_code(self, title):
         """Open either the camera dialog or scanner input depending on the toggle."""

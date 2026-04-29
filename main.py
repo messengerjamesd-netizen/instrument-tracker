@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-APP_VERSION     = "2.0"
+APP_VERSION     = "2.1"
 APP_GITHUB_REPO = "messengerjamesd-netizen/instrument-tracker"
 
 def _splash_msg(splash, app, text):

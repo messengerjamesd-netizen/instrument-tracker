@@ -338,7 +338,8 @@ class PhotoCaptureDialog(QDialog):
             path = self._save_path
         else:
             if getattr(sys, "frozen", False):
-                base = os.path.dirname(sys.executable)
+                base = os.path.join(os.environ.get("APPDATA", os.path.dirname(sys.executable)),
+                                    "InstrumentTracker")
             else:
                 base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             photos_dir = os.path.join(base, "contract_photos")

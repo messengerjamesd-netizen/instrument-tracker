@@ -93,7 +93,7 @@ def get_all_students():
 def get_student_roster():
     with get_connection() as conn:
         return conn.execute("""
-            SELECT s.*, i.name AS instrument_name, i.model, i.serial_number
+            SELECT s.*, i.id AS instrument_id, i.name AS instrument_name, i.model, i.serial_number
             FROM students s
             LEFT JOIN instruments i ON i.current_student_id = s.id
             ORDER BY s.name COLLATE NOCASE

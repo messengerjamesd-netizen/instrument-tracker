@@ -53,6 +53,16 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._build_sidebar())
         outer.addWidget(self._stack, 1)
 
+        # Cross-page navigation
+        instruments_page = self._items[1][1]
+        students_page = self._items[2][1]
+        students_page.navigate_to_instrument.connect(
+            lambda iid: (self._navigate(1), instruments_page.show_instrument(iid))
+        )
+        instruments_page.navigate_to_student.connect(
+            lambda sid: (self._navigate(2), students_page.show_student(sid))
+        )
+
         self._current_version = ""
         self._pending_download_url = ""
 

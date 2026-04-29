@@ -1,7 +1,8 @@
 import csv
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
@@ -16,7 +17,7 @@ from ui.actions_tab import CheckinDialog
 from ui.instrument_detail_dialog import InstrumentDetailDialog
 
 
-STATUSES = ["Available", "Checked Out", "Needs Repair", "Out for Repair"]
+STATUSES = ["Available", "Checked Out", "Needs Repair", "Out for Repair", "Summer Hold"]
 REPAIR_STATUSES = {"Needs Repair", "Out for Repair"}
 
 
@@ -195,6 +196,8 @@ class ChangeStatusDialog(QDialog):
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class InstrumentsPage(QWidget):
+    navigate_to_student = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []
@@ -229,8 +232,13 @@ class InstrumentsPage(QWidget):
         toolbar.addWidget(self.search_box)
 
         toolbar.addSpacing(12)
-        import_btn = QPushButton("Import CSV / Excel")
+        import_btn = QPushButton("Import Spreadsheet")
         import_btn.setMinimumHeight(32)
+        import_btn.setToolTip(
+            "Expected columns: Name, Model, Serial Number, QR Code Text (optional)\n"
+            "If QR Code Text is blank or missing, Serial Number is used instead.\n"
+            "Supports .csv, .tsv, .xlsx, .xls, .ods"
+        )
         import_btn.clicked.connect(self._import_spreadsheet)
         toolbar.addWidget(import_btn)
 
@@ -261,6 +269,12 @@ class InstrumentsPage(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_details)
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.setMouseTracking(True)
+        self.table.viewport().setMouseTracking(True)
+        self.table.cellEntered.connect(self._on_cell_hovered)
+        self.table.viewport().installEventFilter(self)
+        self._hovered_link_cell = None
         layout.addWidget(self.table)
 
         # Row count
@@ -333,11 +347,20 @@ class InstrumentsPage(QWidget):
                 item.setData(Qt.UserRole, instr["id"])
                 self.table.setItem(r, c, item)
 
+            student_id = instr["current_student_id"]
+            student_item = self.table.item(r, 5)
+            if student_id and student_item:
+                student_item.setForeground(QColor("#7eb8f7"))
+                student_item.setToolTip("Click to view this student")
+                student_item.setData(Qt.UserRole + 1, student_id)
+
             status_item = self.table.item(r, 4)
             if instr["status"] == "Available":
                 status_item.setForeground(Qt.green)
             elif instr["status"] == "Checked Out":
                 status_item.setForeground(Qt.yellow)
+            elif instr["status"] == "Summer Hold":
+                status_item.setForeground(QColor("#7eb8f7"))
             else:
                 status_item.setForeground(Qt.red)
 
@@ -431,7 +454,7 @@ class InstrumentsPage(QWidget):
                 name = row.get("Name", "").strip()
                 model = row.get("Model", "").strip()
                 serial = row.get("Serial Number", "").strip()
-                qr = row.get("QR Code Text", "").strip()
+                qr = row.get("QR Code Text", "").strip() or serial
                 if not name:
                     skipped += 1
                     continue
@@ -539,6 +562,51 @@ class InstrumentsPage(QWidget):
         if reply == QMessageBox.Yes:
             db.delete_instrument(iid)
             self.refresh()
+
+    def _on_cell_hovered(self, row, col):
+        self._clear_link_hover()
+        item = self.table.item(row, col)
+        if col == 5 and item and item.data(Qt.UserRole + 1):
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
+            self._hovered_link_cell = (row, col)
+
+    def _clear_link_hover(self):
+        if self._hovered_link_cell:
+            r, c = self._hovered_link_cell
+            item = self.table.item(r, c)
+            if item:
+                font = item.font()
+                font.setBold(False)
+                item.setFont(font)
+            self._hovered_link_cell = None
+
+    def eventFilter(self, obj, event):
+        if obj is self.table.viewport() and event.type() == QEvent.Leave:
+            self._clear_link_hover()
+        return super().eventFilter(obj, event)
+
+    def _on_cell_clicked(self, row, col):
+        if col != 5:
+            return
+        item = self.table.item(row, 5)
+        if not item:
+            return
+        student_id = item.data(Qt.UserRole + 1)
+        if student_id:
+            self.navigate_to_student.emit(student_id)
+
+    def show_instrument(self, instrument_id):
+        self.status_filter.setCurrentIndex(0)
+        self.search_box.clear()
+        self.refresh()
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item and item.data(Qt.UserRole) == instrument_id:
+                self.table.selectRow(row)
+                self.table.scrollToItem(item)
+                break
 
     def _view_details(self):
         iid = self._selected_instrument_id()
