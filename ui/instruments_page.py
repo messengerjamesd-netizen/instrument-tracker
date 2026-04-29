@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QDialog, QDialogButtonBox, QComboBox, QFormLayout,
-    QPlainTextEdit, QFileDialog,
+    QPlainTextEdit, QFileDialog, QMenu, QScrollArea, QCheckBox, QFrame,
 )
 
 import database as db
@@ -73,14 +73,11 @@ class AddInstrumentDialog(QDialog):
         self.model_edit = QLineEdit()
         self.model_edit.setPlaceholderText("e.g., Yamaha YFL-221")
         self.serial_edit = QLineEdit()
-        self.serial_edit.setPlaceholderText("Serial Number (used as QR text if QR blank)")
-        self.qr_edit = QLineEdit()
-        self.qr_edit.setPlaceholderText("Leave blank to use serial number")
+        self.serial_edit.setPlaceholderText("Used for QR code scanning")
 
         layout.addRow("Instrument Name *", self.name_edit)
         layout.addRow("Model", self.model_edit)
         layout.addRow("Serial Number", self.serial_edit)
-        layout.addRow("QR Code Text", self.qr_edit)
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self._on_accept)
@@ -96,11 +93,11 @@ class AddInstrumentDialog(QDialog):
         self.accept()
 
     def get_values(self):
-        name = self.name_edit.text().strip()
-        model = self.model_edit.text().strip()
-        serial = self.serial_edit.text().strip()
-        qr = self.qr_edit.text().strip() or serial
-        return name, model, serial, qr
+        return (
+            self.name_edit.text().strip(),
+            self.model_edit.text().strip(),
+            self.serial_edit.text().strip(),
+        )
 
 
 class EditInstrumentDialog(QDialog):
@@ -116,12 +113,10 @@ class EditInstrumentDialog(QDialog):
         self.name_edit = QLineEdit(instrument["name"])
         self.model_edit = QLineEdit(instrument["model"] or "")
         self.serial_edit = QLineEdit(instrument["serial_number"] or "")
-        self.qr_edit = QLineEdit(instrument["qr_code_text"] or "")
 
         layout.addRow("Name:", self.name_edit)
         layout.addRow("Model:", self.model_edit)
         layout.addRow("Serial Number:", self.serial_edit)
-        layout.addRow("QR Code Text:", self.qr_edit)
 
         btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -133,7 +128,6 @@ class EditInstrumentDialog(QDialog):
             self.name_edit.text().strip(),
             self.model_edit.text().strip(),
             self.serial_edit.text().strip(),
-            self.qr_edit.text().strip(),
         )
 
 
@@ -193,6 +187,142 @@ class ChangeStatusDialog(QDialog):
         return self.repair_notes.toPlainText().strip()
 
 
+# ── Bulk change dialog ────────────────────────────────────────────────────────
+
+BULK_STATUSES = ["Available", "Checked Out", "Summer Hold", "Needs Repair", "Out for Repair"]
+
+class BulkChangeStatusDialog(QDialog):
+    def __init__(self, instruments, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Change Status for Multiple Instruments")
+        self.setMinimumSize(520, 480)
+        self._checkboxes = []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        # Status selector
+        top_row = QHBoxLayout()
+        top_row.addWidget(QLabel("Change selected instruments to:"))
+        self.status_combo = QComboBox()
+        for s in BULK_STATUSES:
+            self.status_combo.addItem(s)
+        self.status_combo.currentTextChanged.connect(self._on_status_changed)
+        top_row.addWidget(self.status_combo)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        # Repair notes (shown only for repair statuses)
+        self.repair_label = QLabel("Notes (applied to all selected):")
+        self.repair_notes = QPlainTextEdit()
+        self.repair_notes.setPlaceholderText("Describe what needs to be repaired…")
+        self.repair_notes.setFixedHeight(60)
+        layout.addWidget(self.repair_label)
+        layout.addWidget(self.repair_notes)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        # Filter + select helpers
+        sel_row = QHBoxLayout()
+        sel_row.addWidget(QLabel("Show:"))
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem("All Statuses", "")
+        for s in STATUSES:
+            self._filter_combo.addItem(s, s)
+        self._filter_combo.currentIndexChanged.connect(self._apply_filter)
+        sel_row.addWidget(self._filter_combo)
+        sel_row.addSpacing(12)
+        all_btn = QPushButton("Select All")
+        all_btn.setMinimumHeight(28)
+        all_btn.clicked.connect(self._select_all_visible)
+        none_btn = QPushButton("Deselect All")
+        none_btn.setMinimumHeight(28)
+        none_btn.clicked.connect(self._deselect_all_visible)
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        # Scrollable instrument list
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        list_widget = QWidget()
+        self._list_layout = QVBoxLayout(list_widget)
+        self._list_layout.setSpacing(4)
+        self._list_layout.setContentsMargins(4, 4, 4, 4)
+
+        for instr in instruments:
+            label = instr["name"]
+            if instr["model"]:
+                label += f"  —  {instr['model']}"
+            if instr["serial_number"]:
+                label += f"  (S/N: {instr['serial_number']})"
+            label += f"  [{instr['status']}]"
+            cb = QCheckBox(label)
+            cb.setChecked(False)
+            self._list_layout.addWidget(cb)
+            self._checkboxes.append((cb, instr))
+
+        self._list_layout.addStretch()
+        scroll.setWidget(list_widget)
+        layout.addWidget(scroll, 1)
+
+        btns = QDialogButtonBox()
+        apply_btn = btns.addButton("Apply Changes", QDialogButtonBox.AcceptRole)
+        apply_btn.setObjectName("primary")
+        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._on_status_changed(self.status_combo.currentText())
+
+    def _on_status_changed(self, status):
+        visible = status in REPAIR_STATUSES
+        self.repair_label.setVisible(visible)
+        self.repair_notes.setVisible(visible)
+
+    def _apply_filter(self):
+        filter_status = self._filter_combo.currentData()
+        for cb, instr in self._checkboxes:
+            cb.setVisible(not filter_status or instr["status"] == filter_status)
+
+    def _select_all_visible(self):
+        for cb, _ in self._checkboxes:
+            if cb.isVisible():
+                cb.setChecked(True)
+
+    def _deselect_all_visible(self):
+        for cb, _ in self._checkboxes:
+            if cb.isVisible():
+                cb.setChecked(False)
+
+    def _on_accept(self):
+        if not any(cb.isChecked() for cb, _ in self._checkboxes):
+            QMessageBox.warning(self, "Nothing Selected", "Select at least one instrument.")
+            return
+        if self.status_combo.currentText() in REPAIR_STATUSES:
+            if not self.repair_notes.toPlainText().strip():
+                QMessageBox.warning(self, "Notes Required",
+                                    "Please describe what needs to be repaired.")
+                return
+        self.accept()
+
+    def get_selected(self):
+        return [instr for cb, instr in self._checkboxes if cb.isChecked()]
+
+    def get_status(self):
+        return self.status_combo.currentText()
+
+    def get_repair_notes(self):
+        return self.repair_notes.toPlainText().strip()
+
+
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class InstrumentsPage(QWidget):
@@ -235,12 +365,16 @@ class InstrumentsPage(QWidget):
         import_btn = QPushButton("Import Spreadsheet")
         import_btn.setMinimumHeight(32)
         import_btn.setToolTip(
-            "Expected columns: Name, Model, Serial Number, QR Code Text (optional)\n"
-            "If QR Code Text is blank or missing, Serial Number is used instead.\n"
+            "Expected columns: Name, Model, Serial Number\n"
             "Supports .csv, .tsv, .xlsx, .xls, .ods"
         )
         import_btn.clicked.connect(self._import_spreadsheet)
         toolbar.addWidget(import_btn)
+
+        bulk_btn = QPushButton("Bulk Change Status")
+        bulk_btn.setMinimumHeight(32)
+        bulk_btn.clicked.connect(self._bulk_change_status)
+        toolbar.addWidget(bulk_btn)
 
         add_btn = QPushButton("+ Add Instrument")
         add_btn.setObjectName("primary")
@@ -255,11 +389,11 @@ class InstrumentsPage(QWidget):
         self.table.setColumnCount(8)
         self.table.setHorizontalHeaderLabels([
             "ID", "Name", "Model", "Serial Number",
-            "Status", "Current Student", "Last Checked Out", "Last Checked In",
+            "Status", "Checked Out To", "Last Checked Out", "Last Checked In",
         ])
+        self.table.setColumnHidden(0, True)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Stretch)
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hdr.setSectionsClickable(True)
         hdr.sectionClicked.connect(self._on_header_clicked)
@@ -270,6 +404,8 @@ class InstrumentsPage(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_details)
         self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_right_click)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
         self.table.cellEntered.connect(self._on_cell_hovered)
@@ -277,7 +413,11 @@ class InstrumentsPage(QWidget):
         self._hovered_link_cell = None
         layout.addWidget(self.table)
 
-        # Row count
+        # Hint + row count
+        hint = QLabel("Tip: Double-click a row to view full history and contracts.")
+        hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
+        layout.addWidget(hint)
+
         self.row_count_label = QLabel("")
         self.row_count_label.setObjectName("status")
         layout.addWidget(self.row_count_label)
@@ -300,7 +440,6 @@ class InstrumentsPage(QWidget):
             bar.addWidget(btn)
             return btn
 
-        bar_btn("Refresh", self.refresh)
         bar_btn("Edit Details", self._edit_instrument)
         bar_btn("Change Status", self._change_status)
         bar_btn("Delete", self._delete_instrument, danger=True)
@@ -368,7 +507,13 @@ class InstrumentsPage(QWidget):
 
         total = len(self._data)
         shown = len(rows)
-        if shown == total:
+        if total == 0:
+            self.row_count_label.setText(
+                "No instruments yet — click + Add Instrument to get started."
+            )
+        elif shown == 0:
+            self.row_count_label.setText("No instruments match your filter.")
+        elif shown == total:
             self.row_count_label.setText(
                 f"Showing {shown} instrument{'s' if shown != 1 else ''}"
             )
@@ -417,13 +562,168 @@ class InstrumentsPage(QWidget):
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
+    def _do_checkout(self, instr):
+        """Handle changing an instrument to Checked Out. Returns True if successful."""
+        if instr["status"] == "Summer Hold" and instr["current_student_id"]:
+            student = db.get_student_by_id(instr["current_student_id"])
+            student_name = student["name"] if student else "the assigned student"
+            reply = QMessageBox.question(
+                self, "Resume Checkout",
+                f"Check out back to {student_name}?",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply == QMessageBox.Yes:
+                db.resume_checkout(instr["id"])
+                return True
+            return False
+
+        if not db.get_all_students():
+            QMessageBox.warning(self, "No Students",
+                                "No students in the system. Add students first.")
+            return False
+        co_dlg = CheckoutDialog(instr, self)
+        if co_dlg.exec() != QDialog.Accepted or not co_dlg.selected_student_id:
+            return False
+        db.checkout_instrument(instr["id"], co_dlg.selected_student_id,
+                               notes=co_dlg.notes,
+                               condition_photo_path=co_dlg.condition_photo_path,
+                               contract_photo_path=co_dlg.contract_photo_path)
+        if co_dlg.contract_photo_path:
+            db.add_contract(co_dlg.selected_student_id, instr["id"],
+                            co_dlg.contract_photo_path,
+                            notes=co_dlg.notes or "Created automatically from checkout.")
+        return True
+
+    def _do_summer_hold(self, instr):
+        """Handle changing an instrument to Summer Hold. Returns True if successful."""
+        if instr["current_student_id"]:
+            db.update_instrument_status(instr["id"], "Summer Hold")
+            return True
+        reply = QMessageBox.question(
+            self, "Student Required",
+            "Summer Hold requires a student to be assigned.\n\n"
+            "Assign a student now and then mark as Summer Hold?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return False
+        if not db.get_all_students():
+            QMessageBox.warning(self, "No Students",
+                                "No students in the system. Add students first.")
+            return False
+        co_dlg = CheckoutDialog(instr, self)
+        if co_dlg.exec() != QDialog.Accepted or not co_dlg.selected_student_id:
+            return False
+        db.checkout_instrument(instr["id"], co_dlg.selected_student_id,
+                               notes=co_dlg.notes,
+                               condition_photo_path=co_dlg.condition_photo_path,
+                               contract_photo_path=co_dlg.contract_photo_path)
+        db.update_instrument_status(instr["id"], "Summer Hold")
+        if co_dlg.contract_photo_path:
+            db.add_contract(co_dlg.selected_student_id, instr["id"],
+                            co_dlg.contract_photo_path,
+                            notes=co_dlg.notes or "Created automatically from checkout.")
+        return True
+
+    def _on_right_click(self, pos):
+        item = self.table.itemAt(pos)
+        if not item or item.column() != 4:
+            return
+        iid = self.table.item(item.row(), 0).data(Qt.UserRole)
+        instr = db.get_instrument_by_id(iid)
+        if not instr:
+            return
+        menu = QMenu(self)
+        for status in STATUSES:
+            action = menu.addAction(status)
+            if status == instr["status"]:
+                action.setEnabled(False)
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if not chosen:
+            return
+        new_status = chosen.text()
+        if new_status == "Checked Out":
+            if not self._do_checkout(instr):
+                return
+        elif new_status == "Available":
+            ci_dlg = CheckinDialog(instr, self)
+            if ci_dlg.exec() != QDialog.Accepted:
+                return
+            db.checkin_instrument(iid, notes=ci_dlg.notes,
+                                  condition_photo_path=ci_dlg.condition_photo_path)
+        elif new_status == "Summer Hold":
+            if not self._do_summer_hold(instr):
+                return
+        elif new_status in REPAIR_STATUSES:
+            dlg = ChangeStatusDialog(instr, self)
+            dlg.status_combo.setCurrentText(new_status)
+            if dlg.exec() != QDialog.Accepted:
+                return
+            db.update_instrument_status(iid, new_status)
+            db.log_repair_note(iid, new_status, dlg.get_repair_notes())
+        else:
+            db.update_instrument_status(iid, new_status)
+        self.refresh()
+
+    def _bulk_change_status(self):
+        instruments = db.get_all_instruments()
+        if not instruments:
+            QMessageBox.information(self, "No Instruments",
+                                    "No instruments in the system yet.")
+            return
+        dlg = BulkChangeStatusDialog(instruments, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        new_status = dlg.get_status()
+        repair_notes = dlg.get_repair_notes()
+        selected = dlg.get_selected()
+
+        if new_status == "Checked Out":
+            resumed, skipped = 0, 0
+            for instr in selected:
+                if instr["current_student_id"]:
+                    db.resume_checkout(instr["id"])
+                    resumed += 1
+                else:
+                    skipped += 1
+            self.refresh()
+            msg = f"Resumed {resumed} instrument{'s' if resumed != 1 else ''}."
+            if skipped:
+                msg += f"\n{skipped} skipped (no student assigned)."
+            QMessageBox.information(self, "Done", msg)
+            return
+
+        if new_status == "Summer Hold":
+            applied, skipped = 0, 0
+            for instr in selected:
+                if instr["current_student_id"]:
+                    db.update_instrument_status(instr["id"], "Summer Hold")
+                    applied += 1
+                else:
+                    skipped += 1
+            self.refresh()
+            msg = f"Set {applied} instrument{'s' if applied != 1 else ''} to Summer Hold."
+            if skipped:
+                msg += (f"\n{skipped} skipped (no student assigned)."
+                        "\nUse Change Status on each to assign a student first.")
+            QMessageBox.information(self, "Done", msg)
+            return
+
+        for instr in selected:
+            db.update_instrument_status(instr["id"], new_status)
+            if new_status in REPAIR_STATUSES:
+                db.log_repair_note(instr["id"], new_status, repair_notes)
+        self.refresh()
+        QMessageBox.information(self, "Done",
+                                f"Updated {len(selected)} instrument{'s' if len(selected) != 1 else ''}.")
+
     def _add_instrument(self):
         dlg = AddInstrumentDialog(self)
         if dlg.exec() != QDialog.Accepted:
             return
-        name, model, serial, qr = dlg.get_values()
+        name, model, serial = dlg.get_values()
         try:
-            db.add_instrument(name, model, serial, qr)
+            db.add_instrument(name, model, serial)
             self.refresh()
         except Exception as e:
             QMessageBox.warning(self, "Error", str(e))
@@ -454,7 +754,6 @@ class InstrumentsPage(QWidget):
                 name = row.get("Name", "").strip()
                 model = row.get("Model", "").strip()
                 serial = row.get("Serial Number", "").strip()
-                qr = row.get("QR Code Text", "").strip() or serial
                 if not name:
                     skipped += 1
                     continue
@@ -462,7 +761,7 @@ class InstrumentsPage(QWidget):
                     conn.execute(
                         "INSERT INTO instruments (name, model, serial_number, qr_code_text) "
                         "VALUES (?, ?, ?, ?)",
-                        (name, model, serial, qr),
+                        (name, model, serial, serial),
                     )
                     added += 1
                 except Exception:
@@ -485,11 +784,11 @@ class InstrumentsPage(QWidget):
         dlg = EditInstrumentDialog(instr, self)
         if dlg.exec() != QDialog.Accepted:
             return
-        name, model, serial, qr = dlg.get_values()
+        name, model, serial = dlg.get_values()
         if not name:
             QMessageBox.warning(self, "Required", "Name cannot be empty.")
             return
-        db.update_instrument(iid, name, model, serial, qr)
+        db.update_instrument(iid, name, model, serial)
         self.refresh()
 
     def _change_status(self):
@@ -507,26 +806,8 @@ class InstrumentsPage(QWidget):
         new_status = dlg.get_status()
 
         if new_status == "Checked Out":
-            if not db.get_all_students():
-                QMessageBox.warning(self, "No Students",
-                                    "No students in the system. Add students first.")
+            if not self._do_checkout(instr):
                 return
-            co_dlg = CheckoutDialog(instr, self)
-            if co_dlg.exec() != QDialog.Accepted or not co_dlg.selected_student_id:
-                return
-            db.checkout_instrument(
-                iid,
-                co_dlg.selected_student_id,
-                notes=co_dlg.notes,
-                condition_photo_path=co_dlg.condition_photo_path,
-                contract_photo_path=co_dlg.contract_photo_path,
-            )
-            if co_dlg.contract_photo_path:
-                db.add_contract(
-                    co_dlg.selected_student_id, iid,
-                    co_dlg.contract_photo_path,
-                    notes=co_dlg.notes or "Created automatically from checkout.",
-                )
 
         elif new_status == "Available":
             ci_dlg = CheckinDialog(instr, self)
@@ -537,6 +818,10 @@ class InstrumentsPage(QWidget):
                 notes=ci_dlg.notes,
                 condition_photo_path=ci_dlg.condition_photo_path,
             )
+
+        elif new_status == "Summer Hold":
+            if not self._do_summer_hold(instr):
+                return
 
         else:
             db.update_instrument_status(iid, new_status)

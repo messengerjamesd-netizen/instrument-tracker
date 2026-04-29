@@ -93,9 +93,15 @@ def get_all_students():
 def get_student_roster():
     with get_connection() as conn:
         return conn.execute("""
-            SELECT s.*, i.id AS instrument_id, i.name AS instrument_name, i.model, i.serial_number
+            SELECT s.*,
+                MIN(i.id)   AS instrument_id,
+                MIN(i.name) AS instrument_name,
+                MIN(i.model) AS model,
+                MIN(i.serial_number) AS serial_number,
+                COUNT(i.id) AS instrument_count
             FROM students s
             LEFT JOIN instruments i ON i.current_student_id = s.id
+            GROUP BY s.id
             ORDER BY s.name COLLATE NOCASE
         """).fetchall()
 
@@ -155,11 +161,11 @@ def export_students_to_csv(filepath):
 
 # ── Instruments ───────────────────────────────────────────────────────────────
 
-def add_instrument(name, model, serial_number, qr_code_text):
+def add_instrument(name, model, serial_number):
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO instruments (name, model, serial_number, qr_code_text) VALUES (?, ?, ?, ?)",
-            (name, model, serial_number, qr_code_text),
+            (name, model, serial_number, serial_number),
         )
 
 
@@ -202,6 +208,17 @@ def get_available_instruments():
         """).fetchall()
 
 
+def get_summer_hold_instruments():
+    with get_connection() as conn:
+        return conn.execute("""
+            SELECT i.*, s.name AS student_name
+            FROM instruments i
+            LEFT JOIN students s ON i.current_student_id = s.id
+            WHERE i.status = 'Summer Hold'
+            ORDER BY i.name COLLATE NOCASE
+        """).fetchall()
+
+
 def get_instrument_by_id(instrument_db_id):
     with get_connection() as conn:
         return conn.execute(
@@ -219,11 +236,11 @@ def get_instrument_by_qr(qr_text):
         ).fetchone()
 
 
-def update_instrument(instrument_db_id, name, model, serial_number, qr_code_text):
+def update_instrument(instrument_db_id, name, model, serial_number):
     with get_connection() as conn:
         conn.execute(
             "UPDATE instruments SET name=?, model=?, serial_number=?, qr_code_text=? WHERE id=?",
-            (name, model, serial_number, qr_code_text, instrument_db_id),
+            (name, model, serial_number, serial_number, instrument_db_id),
         )
 
 
@@ -245,6 +262,27 @@ def update_instrument_status(instrument_db_id, status):
 def delete_instrument(instrument_db_id):
     with get_connection() as conn:
         conn.execute("DELETE FROM instruments WHERE id=?", (instrument_db_id,))
+
+
+def resume_checkout(instrument_db_id):
+    """Flip a Summer Hold instrument back to Checked Out for the same student."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT current_student_id FROM instruments WHERE id=?", (instrument_db_id,)
+        ).fetchone()
+        if not row or not row["current_student_id"]:
+            return
+        conn.execute(
+            "UPDATE instruments SET status='Checked Out', last_checked_out=? WHERE id=?",
+            (now, instrument_db_id),
+        )
+        conn.execute(
+            "INSERT INTO checkout_history "
+            "(instrument_id, student_id, action, timestamp, notes) "
+            "VALUES (?, ?, 'check_out', ?, 'Resumed from Summer Hold')",
+            (instrument_db_id, row["current_student_id"], now),
+        )
 
 
 def checkout_instrument(instrument_db_id, student_db_id, notes="",

@@ -138,9 +138,9 @@ class StudentsPage(QWidget):
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(["ID", "Name", "Student ID", "Grade", "Instrument"])
+        self.table.setColumnHidden(0, True)
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Stretch)
-        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         hdr.setSectionsClickable(True)
         hdr.sectionClicked.connect(self._on_header_clicked)
         self.table.setSortingEnabled(True)
@@ -157,7 +157,11 @@ class StudentsPage(QWidget):
         self._hovered_link_cell = None
         layout.addWidget(self.table)
 
-        # Row count
+        # Hint + row count
+        hint = QLabel("Tip: Double-click a row to view a student's full instrument history.")
+        hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
+        layout.addWidget(hint)
+
         self.row_count_label = QLabel("")
         self.row_count_label.setObjectName("status")
         layout.addWidget(self.row_count_label)
@@ -218,10 +222,13 @@ class StudentsPage(QWidget):
                 self.table.setItem(r, c, item)
 
             instrument_id = s["instrument_id"] if s["instrument_id"] else None
-            instrument_name = s["instrument_name"] or ""
-            model = s["model"] or ""
+            count = s["instrument_count"] if s["instrument_count"] else 0
             if instrument_id:
+                instrument_name = s["instrument_name"] or ""
+                model = s["model"] or ""
                 label = f"{instrument_name} ({model})" if model else instrument_name
+                if count > 1:
+                    label += f" + {count - 1} more"
                 instr_item = QTableWidgetItem(label)
                 instr_item.setForeground(QColor("#7eb8f7"))
                 instr_item.setToolTip("Click to view this instrument")
@@ -236,7 +243,13 @@ class StudentsPage(QWidget):
 
         total = len(self._data)
         shown = len(rows)
-        if shown == total:
+        if total == 0:
+            self.row_count_label.setText(
+                "No students yet — click + Add Student to get started."
+            )
+        elif shown == 0:
+            self.row_count_label.setText("No students match your search.")
+        elif shown == total:
             self.row_count_label.setText(
                 f"Showing {shown} student{'s' if shown != 1 else ''}"
             )

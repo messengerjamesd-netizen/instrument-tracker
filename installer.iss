@@ -1,7 +1,7 @@
 [Setup]
 AppId={{F3A2B1C4-7D8E-4F9A-B2C3-1D4E5F6A7B8C}
 AppName=Instrument Tracker
-AppVersion=2.1
+AppVersion=2.2
 AppPublisher=JD Messenger
 AppPublisherURL=
 DefaultDirName={autopf}\Instrument Tracker
