@@ -5,7 +5,7 @@ from PySide6.QtGui import QPixmap, QPainter, QColor, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDialog, QMessageBox, QSizePolicy, QFrame, QDialogButtonBox,
-    QPlainTextEdit, QLineEdit, QButtonGroup, QScrollArea,
+    QPlainTextEdit, QLineEdit, QButtonGroup, QScrollArea, QRadioButton,
 )
 import database as db
 from ui.camera_dialog import CameraDialog, PhotoCaptureDialog
@@ -18,12 +18,16 @@ ACTION_LABELS = {
     "needs_repair":    "Needs Repair",
     "out_for_repair":  "Out for Repair",
     "repair_returned": "Returned from Repair",
+    "summer_hold":     "Summer Hold",
 }
 
 
 def _relative_time(timestamp_str):
     try:
-        ts = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M")
+        try:
+            ts = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            ts = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M")
         secs = int((datetime.now() - ts).total_seconds())
         if secs < 60:
             return "just now"
@@ -187,11 +191,13 @@ class ScannerInputDialog(QDialog):
 class CheckinDialog(QDialog):
     """Confirm check-in with optional condition photo and notes."""
 
-    def __init__(self, instrument, parent=None):
+    def __init__(self, instrument, parent=None, active_checkouts=None):
         super().__init__(parent)
         self.instrument = instrument
         self.condition_photo_path = ""
         self.notes = ""
+        self.student_db_id = None  # None = full check-in; set to specific ID for partial
+        self._active_checkouts = active_checkouts or []
 
         name = instrument["name"]
         serial = instrument["serial_number"] or "no serial"
@@ -208,12 +214,30 @@ class CheckinDialog(QDialog):
         hdr.setStyleSheet("font-size: 15px;")
         layout.addWidget(hdr)
 
-        try:
-            student_name = self.instrument["student_name"]
-        except (IndexError, KeyError):
-            student_name = None
-        if student_name:
-            layout.addWidget(QLabel(f"Currently checked out to: <b>{student_name}</b>"))
+        self._student_picker_group = None
+        if len(self._active_checkouts) > 1:
+            layout.addWidget(QLabel("Who is returning this instrument?"))
+            self._student_picker_group = QButtonGroup(self)
+            for i, co in enumerate(self._active_checkouts):
+                rb = QRadioButton(co["student_name"])
+                rb.setProperty("student_db_id", co["student_id"])
+                if i == 0:
+                    rb.setChecked(True)
+                self._student_picker_group.addButton(rb, i)
+                layout.addWidget(rb)
+            rb_all = QRadioButton("All students — fully return instrument (mark Available)")
+            rb_all.setProperty("student_db_id", None)
+            self._student_picker_group.addButton(rb_all, len(self._active_checkouts))
+            layout.addWidget(rb_all)
+        else:
+            try:
+                student_name = self.instrument["student_name"]
+            except (IndexError, KeyError):
+                student_name = None
+            if not student_name and self._active_checkouts:
+                student_name = self._active_checkouts[0]["student_name"]
+            if student_name:
+                layout.addWidget(QLabel(f"Currently checked out to: <b>{student_name}</b>"))
 
         layout.addWidget(self._separator())
 
@@ -282,6 +306,9 @@ class CheckinDialog(QDialog):
 
     def _confirm(self):
         self.notes = self.notes_edit.toPlainText().strip()
+        if self._student_picker_group:
+            checked = self._student_picker_group.checkedButton()
+            self.student_db_id = checked.property("student_db_id") if checked else None
         self.accept()
 
 
@@ -405,6 +432,9 @@ class ActionsTab(QWidget):
 
         self._refresh_activity()
 
+    def refresh(self):
+        self._refresh_activity()
+
     def _refresh_activity(self):
         # Clear old items
         while self._activity_layout.count():
@@ -426,7 +456,7 @@ class ActionsTab(QWidget):
             student = row["student_name"] or ""
             ts      = _relative_time(row["timestamp"])
             label   = ACTION_LABELS.get(action, action)
-            is_out  = action in ("check_out",)
+            is_out  = action == "check_out"
 
             item_frame = _ClickableFrame(row["instrument_id"])
             item_frame.clicked.connect(self.navigate_to_instrument)
@@ -463,15 +493,22 @@ class ActionsTab(QWidget):
             right.setSpacing(4)
             right.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-            badge_text  = "Out" if is_out else "In"
-            badge_style = (
-                "font-weight: bold; padding: 2px 6px; border-radius: 4px; "
-                + ("background: #1a3a1a; color: #6abf6a; border: 1px solid #2a5a2a;"
-                   if is_out else
-                   "background: #1a2a4a; color: #7eb8f7; border: 1px solid #1a3666;")
+            _BADGE = {
+                "check_out":       ("Out", "#262000", "#c8b830", "#403800"),
+                "check_in":        ("In",  "#0a1f0a", "#5caa5c", "#1a401a"),
+                "needs_repair":    ("NR",  "#200a0a", "#cc4444", "#3a1212"),
+                "out_for_repair":  ("Rep", "#200a0a", "#cc4444", "#3a1212"),
+                "repair_returned": ("Ret", "#0a1f0a", "#5caa5c", "#1a401a"),
+                "summer_hold":     ("SH",  "#1a2a4a", "#7eb8f7", "#1a3666"),
+            }
+            b_text, b_bg, b_fg, b_border = _BADGE.get(
+                action, ("In", "#0a1f0a", "#5caa5c", "#1a401a")
             )
-            badge = QLabel(badge_text)
-            badge.setStyleSheet(badge_style)
+            badge = QLabel(b_text)
+            badge.setStyleSheet(
+                f"font-weight: bold; padding: 2px 6px; border-radius: 4px; "
+                f"background: {b_bg}; color: {b_fg}; border: 1px solid {b_border};"
+            )
             badge.setAlignment(Qt.AlignCenter)
             right.addWidget(badge)
 
@@ -529,16 +566,19 @@ class ActionsTab(QWidget):
         if not self._confirm_instrument(instrument, "Check Out"):
             return
 
+        is_additional = False
         if instrument["status"] == "Checked Out":
-            student_name = instrument["student_name"] or "Unknown"
+            active = db.get_instrument_active_checkouts(instrument["id"])
+            current_names = ", ".join(c["student_name"] for c in active) or "Unknown"
             reply = QMessageBox.question(
                 self, "Already Checked Out",
-                f"{instrument['name']} is currently checked out to {student_name}.\n\n"
-                "Check it out to a different student anyway?",
+                f"{instrument['name']} is currently checked out to {current_names}.\n\n"
+                "Add another student to this checkout?",
                 QMessageBox.Yes | QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 return
+            is_additional = True
 
         if not db.get_all_students():
             QMessageBox.warning(self, "No Students",
@@ -549,13 +589,22 @@ class ActionsTab(QWidget):
         if co_dlg.exec() != QDialog.Accepted or not co_dlg.selected_student_id:
             return
 
-        db.checkout_instrument(
-            instrument["id"],
-            co_dlg.selected_student_id,
-            notes=co_dlg.notes,
-            condition_photo_path=co_dlg.condition_photo_path,
-            contract_photo_path=co_dlg.contract_photo_path,
-        )
+        if is_additional:
+            db.checkout_instrument_additional(
+                instrument["id"],
+                co_dlg.selected_student_id,
+                notes=co_dlg.notes,
+                condition_photo_path=co_dlg.condition_photo_path,
+                contract_photo_path=co_dlg.contract_photo_path,
+            )
+        else:
+            db.checkout_instrument(
+                instrument["id"],
+                co_dlg.selected_student_id,
+                notes=co_dlg.notes,
+                condition_photo_path=co_dlg.condition_photo_path,
+                contract_photo_path=co_dlg.contract_photo_path,
+            )
 
         if co_dlg.contract_photo_path:
             db.add_contract(
@@ -600,7 +649,8 @@ class ActionsTab(QWidget):
                                     "Use Change Status on the Instruments page to update it.")
             return
 
-        ci_dlg = CheckinDialog(instrument, self)
+        active_checkouts = db.get_instrument_active_checkouts(instrument["id"])
+        ci_dlg = CheckinDialog(instrument, self, active_checkouts=active_checkouts)
         if ci_dlg.exec() != QDialog.Accepted:
             return
 
@@ -608,6 +658,11 @@ class ActionsTab(QWidget):
             instrument["id"],
             notes=ci_dlg.notes,
             condition_photo_path=ci_dlg.condition_photo_path,
+            student_db_id=ci_dlg.student_db_id,
         )
-        QMessageBox.information(self, "Checked In", f"{instr_label} is now Available.")
+        if ci_dlg.student_db_id and len(active_checkouts) > 1:
+            QMessageBox.information(self, "Checked In",
+                                    f"{instr_label} — student removed, still checked out to remaining student(s).")
+        else:
+            QMessageBox.information(self, "Checked In", f"{instr_label} is now Available.")
         self._refresh_activity()

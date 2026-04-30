@@ -65,6 +65,14 @@ def initialize_db():
                 date TEXT NOT NULL,
                 active INTEGER DEFAULT 1
             );
+
+            CREATE TABLE IF NOT EXISTS instrument_checkouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instrument_id INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+                student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                checkout_date TEXT NOT NULL,
+                UNIQUE(instrument_id, student_id)
+            );
         """)
         # Migrate existing DBs that predate the photo columns
         cols = [r[1] for r in conn.execute("PRAGMA table_info(checkout_history)")]
@@ -74,6 +82,23 @@ def initialize_db():
             conn.execute("ALTER TABLE checkout_history ADD COLUMN contract_photo_path TEXT")
         if "repair_invoice_path" not in cols:
             conn.execute("ALTER TABLE checkout_history ADD COLUMN repair_invoice_path TEXT")
+
+        # Migrate existing single-student checkouts into junction table
+        existing = {(r[0], r[1]) for r in conn.execute(
+            "SELECT instrument_id, student_id FROM instrument_checkouts"
+        ).fetchall()}
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        for row in conn.execute(
+            "SELECT id, current_student_id, last_checked_out FROM instruments "
+            "WHERE current_student_id IS NOT NULL AND status IN ('Checked Out', 'Summer Hold')"
+        ).fetchall():
+            key = (row[0], row[1])
+            if key not in existing:
+                conn.execute(
+                    "INSERT INTO instrument_checkouts (instrument_id, student_id, checkout_date) "
+                    "VALUES (?, ?, ?)",
+                    (row[0], row[1], row[2] or now),
+                )
 
 
 # ── Students ──────────────────────────────────────────────────────────────────
@@ -103,7 +128,8 @@ def get_student_roster():
                 MIN(i.serial_number) AS serial_number,
                 COUNT(i.id) AS instrument_count
             FROM students s
-            LEFT JOIN instruments i ON i.current_student_id = s.id
+            LEFT JOIN instrument_checkouts ic ON ic.student_id = s.id
+            LEFT JOIN instruments i ON i.id = ic.instrument_id
             GROUP BY s.id
             ORDER BY s.name COLLATE NOCASE
         """).fetchall()
@@ -175,11 +201,27 @@ def add_instrument(name, model, serial_number):
 def get_all_instruments():
     with get_connection() as conn:
         return conn.execute("""
-            SELECT i.*, s.name AS student_name
+            SELECT i.*, s.name AS student_name,
+                (SELECT GROUP_CONCAT(st.name, ', ')
+                 FROM instrument_checkouts ic
+                 JOIN students st ON ic.student_id = st.id
+                 WHERE ic.instrument_id = i.id) AS all_student_names
             FROM instruments i
             LEFT JOIN students s ON i.current_student_id = s.id
             ORDER BY i.name COLLATE NOCASE, i.model COLLATE NOCASE
         """).fetchall()
+
+
+def get_instrument_active_checkouts(instrument_db_id):
+    """Return all active checkout rows (from junction table) with student info."""
+    with get_connection() as conn:
+        return conn.execute("""
+            SELECT ic.*, s.name AS student_name, s.student_id AS student_number, s.grade
+            FROM instrument_checkouts ic
+            JOIN students s ON ic.student_id = s.id
+            WHERE ic.instrument_id = ?
+            ORDER BY ic.checkout_date
+        """, (instrument_db_id,)).fetchall()
 
 
 def get_current_checkouts():
@@ -250,10 +292,14 @@ def update_instrument(instrument_db_id, name, model, serial_number):
 def update_instrument_status(instrument_db_id, status):
     with get_connection() as conn:
         if status == "Available":
-            # Clearing to available also removes the assigned student
+            # Clearing to available also removes the assigned student and all junction rows
             conn.execute(
                 "UPDATE instruments SET status=?, current_student_id=NULL WHERE id=?",
                 (status, instrument_db_id),
+            )
+            conn.execute(
+                "DELETE FROM instrument_checkouts WHERE instrument_id=?",
+                (instrument_db_id,),
             )
         else:
             conn.execute(
@@ -268,8 +314,8 @@ def delete_instrument(instrument_db_id):
 
 
 def resume_checkout(instrument_db_id):
-    """Flip a Summer Hold instrument back to Checked Out for the same student."""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    """Flip a Summer Hold instrument back to Checked Out for the same student(s)."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         row = conn.execute(
             "SELECT current_student_id FROM instruments WHERE id=?", (instrument_db_id,)
@@ -286,11 +332,22 @@ def resume_checkout(instrument_db_id):
             "VALUES (?, ?, 'check_out', ?, 'Resumed from Summer Hold')",
             (instrument_db_id, row["current_student_id"], now),
         )
+        # Ensure all junction-table students are still present (no-op if already there)
+        ic_rows = conn.execute(
+            "SELECT student_id FROM instrument_checkouts WHERE instrument_id=?",
+            (instrument_db_id,),
+        ).fetchall()
+        if not ic_rows:
+            conn.execute(
+                "INSERT OR IGNORE INTO instrument_checkouts (instrument_id, student_id, checkout_date) "
+                "VALUES (?, ?, ?)",
+                (instrument_db_id, row["current_student_id"], now),
+            )
 
 
 def checkout_instrument(instrument_db_id, student_db_id, notes="",
                         condition_photo_path="", contract_photo_path=""):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
             "UPDATE instruments SET status='Checked Out', current_student_id=?, last_checked_out=? WHERE id=?",
@@ -303,32 +360,108 @@ def checkout_instrument(instrument_db_id, student_db_id, notes="",
             (instrument_db_id, student_db_id, now, notes,
              condition_photo_path or None, contract_photo_path or None),
         )
+        # Clear any stale junction rows and start fresh with this student
+        conn.execute("DELETE FROM instrument_checkouts WHERE instrument_id=?", (instrument_db_id,))
+        conn.execute(
+            "INSERT INTO instrument_checkouts (instrument_id, student_id, checkout_date) VALUES (?, ?, ?)",
+            (instrument_db_id, student_db_id, now),
+        )
 
 
-def checkin_instrument(instrument_db_id, notes="", condition_photo_path=""):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+def checkout_instrument_additional(instrument_db_id, student_db_id, notes="",
+                                   condition_photo_path="", contract_photo_path=""):
+    """Add a second (or further) student to an already-checked-out instrument."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO instrument_checkouts (instrument_id, student_id, checkout_date) VALUES (?, ?, ?)",
+            (instrument_db_id, student_db_id, now),
+        )
+        conn.execute(
+            "INSERT INTO checkout_history "
+            "(instrument_id, student_id, action, timestamp, notes, condition_photo_path, contract_photo_path) "
+            "VALUES (?, ?, 'check_out', ?, ?, ?, ?)",
+            (instrument_db_id, student_db_id, now, notes,
+             condition_photo_path or None, contract_photo_path or None),
+        )
+
+
+def checkin_instrument(instrument_db_id, notes="", condition_photo_path="",
+                       student_db_id=None):
+    """Check in an instrument.
+
+    If student_db_id is given, only remove that one student.  When other
+    students remain in the junction table the instrument stays 'Checked Out'
+    and current_student_id is updated to the next remaining student.
+    If no student_db_id is given, all students are cleared and the instrument
+    becomes Available.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         instr = conn.execute(
             "SELECT current_student_id FROM instruments WHERE id=?", (instrument_db_id,)
         ).fetchone()
-        student_db_id = instr["current_student_id"] if instr else None
-        conn.execute(
-            "UPDATE instruments SET status='Available', current_student_id=NULL, last_checked_in=? WHERE id=?",
-            (now, instrument_db_id),
-        )
+        log_student_id = student_db_id or (instr["current_student_id"] if instr else None)
+
+        if student_db_id:
+            # Remove only this student from the junction table
+            conn.execute(
+                "DELETE FROM instrument_checkouts WHERE instrument_id=? AND student_id=?",
+                (instrument_db_id, student_db_id),
+            )
+            # Check remaining students
+            remaining = conn.execute(
+                "SELECT student_id FROM instrument_checkouts WHERE instrument_id=? ORDER BY checkout_date",
+                (instrument_db_id,),
+            ).fetchall()
+            if remaining:
+                # Still has other students — update primary student, stay checked out
+                new_primary = remaining[0]["student_id"]
+                conn.execute(
+                    "UPDATE instruments SET current_student_id=? WHERE id=?",
+                    (new_primary, instrument_db_id),
+                )
+            else:
+                # No one left — fully available
+                conn.execute(
+                    "UPDATE instruments SET status='Available', current_student_id=NULL, last_checked_in=? WHERE id=?",
+                    (now, instrument_db_id),
+                )
+                conn.execute(
+                    "UPDATE contracts SET active = 0 WHERE instrument_id = ? AND active = 1",
+                    (instrument_db_id,),
+                )
+        else:
+            # Full check-in — clear everyone
+            conn.execute("DELETE FROM instrument_checkouts WHERE instrument_id=?", (instrument_db_id,))
+            conn.execute(
+                "UPDATE instruments SET status='Available', current_student_id=NULL, last_checked_in=? WHERE id=?",
+                (now, instrument_db_id),
+            )
+            conn.execute(
+                "UPDATE contracts SET active = 0 WHERE instrument_id = ? AND active = 1",
+                (instrument_db_id,),
+            )
+
         conn.execute(
             "INSERT INTO checkout_history (instrument_id, student_id, action, timestamp, notes, condition_photo_path) "
             "VALUES (?, ?, 'check_in', ?, ?, ?)",
-            (instrument_db_id, student_db_id, now, notes, condition_photo_path or None),
+            (instrument_db_id, log_student_id, now, notes, condition_photo_path or None),
         )
+
+
+def log_status_change(instrument_db_id, action):
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
         conn.execute(
-            "UPDATE contracts SET active = 0 WHERE instrument_id = ? AND active = 1",
-            (instrument_db_id,),
+            "INSERT INTO checkout_history (instrument_id, student_id, action, timestamp) "
+            "VALUES (?, NULL, ?, ?)",
+            (instrument_db_id, action, now),
         )
 
 
 def log_repair_note(instrument_db_id, status, notes):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     action = "needs_repair" if status == "Needs Repair" else "out_for_repair"
     with get_connection() as conn:
         conn.execute(
@@ -339,12 +472,13 @@ def log_repair_note(instrument_db_id, status, notes):
 
 
 def log_repair_return(instrument_db_id, notes="", invoice_path=""):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
             "UPDATE instruments SET status='Available', current_student_id=NULL WHERE id=?",
             (instrument_db_id,),
         )
+        conn.execute("DELETE FROM instrument_checkouts WHERE instrument_id=?", (instrument_db_id,))
         conn.execute(
             "INSERT INTO checkout_history "
             "(instrument_id, student_id, action, timestamp, notes, repair_invoice_path) "
@@ -427,10 +561,13 @@ def get_recent_activity(limit=5):
 
 def get_checked_out_for_student(student_db_id):
     with get_connection() as conn:
-        return conn.execute(
-            "SELECT * FROM instruments WHERE current_student_id=? AND status IN ('Checked Out', 'Summer Hold')",
-            (student_db_id,),
-        ).fetchall()
+        return conn.execute("""
+            SELECT i.*
+            FROM instruments i
+            JOIN instrument_checkouts ic ON ic.instrument_id = i.id
+            WHERE ic.student_id = ?
+            ORDER BY i.name COLLATE NOCASE
+        """, (student_db_id,)).fetchall()
 
 
 def get_instrument_history(instrument_db_id):
@@ -447,7 +584,7 @@ def get_instrument_history(instrument_db_id):
 # ── Contracts ─────────────────────────────────────────────────────────────────
 
 def add_contract(student_db_id, instrument_db_id, scan_file_path, notes):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO contracts (student_id, instrument_id, scan_file_path, notes, date, active) VALUES (?, ?, ?, ?, ?, 1)",

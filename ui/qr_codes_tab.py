@@ -2,13 +2,13 @@ import io
 import os
 import tempfile
 
+from PySide6.QtCore import Qt, Signal, QRect
+from PySide6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QScrollArea,
     QFrame, QComboBox, QColorDialog,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap, QColor
 
 import database as db
 
@@ -28,7 +28,86 @@ _SIZE_INCHES = [0.75, 1.0, 1.25, 1.5, 2.0, 2.5]
 _SIZE_LABELS = ['¾"', '1"', '1¼"', '1½"', '2"', '2½"']
 _QR_STYLES   = ["Square", "Rounded", "Circles", "Gapped"]
 
-_PREVIEW_PX = 180   # preview image area size in pixels
+_PREVIEW_PX = 180   # preview image area width in pixels
+
+# Code128B symbol table (indices 0-102 = data chars, 103=START A,
+# 104=START B, 105=START C, 106=STOP)
+_CODE128B_SYM = [
+    "11011001100","11001101100","11001100110","10010011000","10010001100",
+    "10001001100","10011001000","10011000100","10001100100","11001001000",
+    "11001000100","11000100100","10110011100","10011011100","10011001110",
+    "10111001100","10011101100","10011100110","11001110010","11001011100",
+    "11001001110","11011100100","11001110100","11101101110","11101001100",
+    "11100101100","11100100110","11101100100","11100110100","11100110010",
+    "11011011000","11011000110","11000110110","10100011000","10001011000",
+    "10001000110","10110001000","10001101000","10001100010","11010001000",
+    "11000101000","11000100010","10110111000","10110001110","10001101110",
+    "10111011000","10111000110","10001110110","11101110110","11010001110",
+    "11000101110","11011101000","11011100010","11011101110","11101011000",
+    "11101000110","11100010110","11101101000","11101100010","11100011010",
+    "11101111010","11001000010","11110001010","10100110000","10100001100",
+    "10010110000","10010000110","10000101100","10000100110","10110010000",
+    "10110000100","10011010000","10011000010","10000110100","10000110010",
+    "11000010010","11001010000","11110111010","11000010100","10001111010",
+    "10100111100","10010111100","10010011110","10111100100","10011110100",
+    "10011110010","11110100100","11110010100","11110010010","11011011110",
+    "11011110110","11110110110","10101111000","10100011110","10001011110",
+    "10111101000","10111100010","11110101000","11110100010","10111011110",
+    "10111101110","11101011110","11110101110",
+    "11010000100","11010010000","11010011100","1100011101011",
+]
+
+
+class _PillToggle(QWidget):
+    """Compact pill-style toggle (no animation) for the preview panel."""
+    toggled = Signal(int)
+
+    def __init__(self, labels, parent=None):
+        super().__init__(parent)
+        self._labels = labels
+        self._selected = 0
+        self.setFixedHeight(30)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def selected(self):
+        return self._selected
+
+    def set_selected(self, idx, emit=True):
+        if idx != self._selected:
+            self._selected = idx
+            self.update()
+            if emit:
+                self.toggled.emit(idx)
+
+    def mousePressEvent(self, e):
+        idx = 0 if e.position().x() < self.width() / 2 else 1
+        self.set_selected(idx)
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect()
+
+        track = QPainterPath()
+        track.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 8, 8)
+        p.fillPath(track, QColor("#0f2040"))
+        p.setPen(QPen(QColor("#1a3666"), 1))
+        p.drawPath(track)
+
+        pw = r.width() / 2 - 4
+        px_off = (r.width() / 2) * self._selected + 2
+        pill = QPainterPath()
+        pill.addRoundedRect(px_off, 3, pw, r.height() - 6, 6, 6)
+        p.fillPath(pill, QColor("#1a4a8a"))
+        p.setPen(Qt.NoPen)
+
+        half = r.width() // 2
+        for i, lbl in enumerate(self._labels):
+            p.setPen(QColor("#ffffff" if i == self._selected else "#8aaad0"))
+            p.setFont(self.font())
+            p.drawText(QRect(i * half, 0, half, r.height()), Qt.AlignCenter, lbl)
+
+        p.end()
 
 
 class QRCodesTab(QWidget):
@@ -36,6 +115,7 @@ class QRCodesTab(QWidget):
         super().__init__(parent)
         self._checkboxes = []
         self._qr_color = "#000000"
+        self._preview_mode = "single"
         self._build_ui()
 
     def _build_ui(self):
@@ -49,7 +129,6 @@ class QRCodesTab(QWidget):
 
         layout.addWidget(self._build_options_group())
 
-        # Middle row: instrument list (flex) + preview panel (fixed)
         mid = QHBoxLayout()
         mid.setSpacing(12)
         mid.addWidget(self._build_list_group(), 1)
@@ -76,7 +155,7 @@ class QRCodesTab(QWidget):
         self.type_label = QLabel("Code type:")
         h.addWidget(self.type_label)
         self.type_combo = QComboBox()
-        self.type_combo.addItems(["QR Code", "Barcode (Code 128)"])
+        self.type_combo.addItems(["QR Code", "Barcode"])
         h.addWidget(self.type_combo)
 
         h.addSpacing(20)
@@ -92,7 +171,6 @@ class QRCodesTab(QWidget):
         self.color_btn = QPushButton()
         self.color_btn.setFixedSize(32, 24)
         self.color_btn.setToolTip("Choose QR code color")
-        self.color_btn.clicked.connect(self._pick_color)
         self._apply_color_btn_style()
         h.addWidget(self.color_btn)
 
@@ -182,6 +260,10 @@ class QRCodesTab(QWidget):
         v = QVBoxLayout(panel)
         panel.setFixedWidth(220)
 
+        self._preview_toggle = _PillToggle(["Single", "Page"])
+        self._preview_toggle.toggled.connect(self._on_toggle)
+        v.addWidget(self._preview_toggle)
+
         self._preview_img = QLabel()
         self._preview_img.setFixedSize(_PREVIEW_PX, _PREVIEW_PX)
         self._preview_img.setAlignment(Qt.AlignCenter)
@@ -200,7 +282,27 @@ class QRCodesTab(QWidget):
         v.addStretch()
         return panel
 
+    def _on_toggle(self, idx):
+        mode = "page" if idx == 1 else "single"
+        if mode == self._preview_mode:
+            return
+        self._preview_mode = mode
+        # Label stays 180×180 for both modes; background colour signals the mode
+        if mode == "page":
+            self._preview_img.setStyleSheet(
+                "background: #b8bece; border: 1px solid #c0c8d8; border-radius: 4px;"
+            )
+        else:
+            self._preview_img.setStyleSheet(
+                "background: white; border: 1px solid #c0c8d8; border-radius: 4px;"
+            )
+        self._update_preview()
+
     def _update_preview(self):
+        if self._preview_mode == "page":
+            self._update_page_preview()
+            return
+
         serial = self._preview_serial()
         if not serial:
             self._preview_img.setPixmap(QPixmap())
@@ -209,14 +311,14 @@ class QRCodesTab(QWidget):
             return
 
         try:
-            is_barcode = self.type_combo.currentIndex() == 1
+            avery = self.format_combo.currentIndex() == 1
+            is_barcode = not avery and self.type_combo.currentIndex() == 1
             if is_barcode:
                 pixmap = self._render_barcode_preview(serial, self._qr_color)
                 info = f"Code 128\nS/N: {serial}"
             else:
                 style_idx = self.style_combo.currentIndex()
                 pixmap = self._render_qr_preview(serial, style_idx, self._qr_color)
-                avery = self.format_combo.currentIndex() == 1
                 size_str = '2"' if avery else _SIZE_LABELS[self.size_combo.currentIndex()]
                 info = f"{_QR_STYLES[style_idx]} · {size_str}\nS/N: {serial}"
 
@@ -231,53 +333,247 @@ class QRCodesTab(QWidget):
             self._preview_img.setText("Preview\nunavailable")
             self._preview_info.setText(str(e)[:60])
 
+    def _update_page_preview(self):
+        selected = [instr for cb, instr in self._checkboxes
+                    if cb.isChecked() and instr["serial_number"]]
+        if not selected:
+            self._preview_img.setPixmap(QPixmap())
+            self._preview_img.setText("No instruments\nselected")
+            self._preview_info.setText("")
+            return
+        try:
+            pixmap = self._render_page_preview(selected)
+            if pixmap:
+                self._preview_img.setText("")
+                self._preview_img.setPixmap(
+                    pixmap.scaled(_PREVIEW_PX, _PREVIEW_PX,
+                                  Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                )
+                n = len(selected)
+                self._preview_info.setText(
+                    f"{n} instrument{'s' if n != 1 else ''} · first page"
+                )
+        except Exception as e:
+            self._preview_img.setPixmap(QPixmap())
+            self._preview_img.setText("Preview\nunavailable")
+            self._preview_info.setText(str(e)[:60])
+
     def _preview_serial(self):
         for cb, instr in self._checkboxes:
             if instr["serial_number"]:
                 return instr["serial_number"]
         return ""
 
-    def _render_qr_preview(self, serial, style_idx, color="#000000"):
+    # ── PIL helpers ───────────────────────────────────────────────────────────
+
+    def _qr_pil(self, serial, style_idx, color, size_px):
+        """Return a PIL Image of the QR code resized to size_px × size_px."""
+        from PIL import Image
         import qrcode
-        qr = qrcode.QRCode(border=2)
+
+        border = 1 if size_px < 60 else 2
+        qr = qrcode.QRCode(border=border)
         qr.add_data(serial)
         qr.make(fit=True)
 
         if style_idx == 0:
             img = qr.make_image(fill_color=color, back_color="white")
         else:
-            from qrcode.image.styledimage import StyledPilImage
-            from qrcode.image.styles.moduledrawers import (
-                RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
-            )
+            try:
+                from qrcode.image.styledpil import StyledPilImage
+            except ImportError:
+                from qrcode.image.styledimage import StyledPilImage
+            try:
+                from qrcode.image.styles.moduledrawers.pil import (
+                    RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
+                )
+            except ImportError:
+                from qrcode.image.styles.moduledrawers import (
+                    RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
+                )
+            from qrcode.image.styles.colormasks import SolidFillColorMask
             drawer = [None,
                       RoundedModuleDrawer(),
                       CircleModuleDrawer(),
                       GappedSquareModuleDrawer()][style_idx]
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
             img = qr.make_image(image_factory=StyledPilImage, module_drawer=drawer,
-                                fill_color=color, back_color="white")
+                                color_mask=SolidFillColorMask(front_color=(r, g, b)))
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
+        buf.seek(0)
+        pil_img = Image.open(buf).copy()
+        return pil_img.resize((size_px, size_px), Image.LANCZOS)
+
+    def _barcode_pil(self, serial, color="#000000", bar_h_px=60):
+        """Return a PIL Image of the Code128B barcode (no text)."""
+        from PIL import Image, ImageDraw
+
+        data = [ch for ch in serial if 32 <= ord(ch) <= 126]
+        bits = _CODE128B_SYM[104]
+        check = 104
+        for i, ch in enumerate(data):
+            v = ord(ch) - 32
+            bits += _CODE128B_SYM[v]
+            check += (i + 1) * v
+        bits += _CODE128B_SYM[check % 103]
+        bits += _CODE128B_SYM[106]
+
+        bar_w, quiet = 2, 8
+        fg = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        img_w = len(bits) * bar_w + 2 * quiet
+        img = Image.new("RGB", (img_w, bar_h_px), "white")
+        draw = ImageDraw.Draw(img)
+        x = quiet
+        for bit in bits:
+            if bit == "1":
+                draw.rectangle([x, 0, x + bar_w - 1, bar_h_px - 1], fill=fg)
+            x += bar_w
+        return img
+
+    def _render_qr_preview(self, serial, style_idx, color="#000000"):
+        pil_img = self._qr_pil(serial, style_idx, color, _PREVIEW_PX)
+        buf = io.BytesIO()
+        pil_img.save(buf, format="PNG")
         buf.seek(0)
         px = QPixmap()
         px.loadFromData(buf.read())
         return px
 
     def _render_barcode_preview(self, serial, color="#000000"):
-        from reportlab.graphics.barcode import code128
-        from reportlab.graphics.shapes import Drawing
-        from reportlab.graphics import renderPM
-        from reportlab.lib.colors import HexColor
-
-        bar_h = 60
-        bc = code128.Code128(serial, barWidth=1.8, barHeight=bar_h,
-                             humanReadable=True, barColor=HexColor(color))
-        d = Drawing(bc.width, bar_h + 22)
-        d.add(bc)
-        png_bytes = renderPM.drawToString(d, fmt="PNG", dpi=150)
+        from PIL import Image, ImageDraw
+        bar_img = self._barcode_pil(serial, color, bar_h_px=60)
+        w, h = bar_img.size
+        final = Image.new("RGB", (w, h + 18), "white")
+        final.paste(bar_img, (0, 0))
+        draw = ImageDraw.Draw(final)
+        fg = tuple(int(color[i:i+2], 16) for i in (1, 3, 5))
+        draw.text((8, h + 3), "".join(ch for ch in serial if 32 <= ord(ch) <= 126), fill=fg)
+        buf = io.BytesIO()
+        final.save(buf, format="PNG")
+        buf.seek(0)
         px = QPixmap()
-        px.loadFromData(png_bytes)
+        px.loadFromData(buf.read())
+        return px
+
+    def _render_page_preview(self, selected):
+        """
+        Render a first-page thumbnail showing the actual print layout.
+        The page floats on a grey background so it reads clearly as one page.
+        Returns a QPixmap.
+        """
+        from PIL import Image, ImageDraw
+
+        # Letter at 72 pt/px: 612 × 792
+        PAGE_W, PAGE_H = 612, 792
+        THUMB_W = _PREVIEW_PX
+        THUMB_H = int(PAGE_H / PAGE_W * THUMB_W)   # ≈ 233
+
+        # 3 px inset: grey surround + white page rect
+        INSET = 3
+        scale = (THUMB_W - 2 * INSET) / PAGE_W
+
+        # Grey canvas — the page will appear as a white card floating on it
+        canvas = Image.new("RGB", (THUMB_W, THUMB_H), "#b8bece")
+        draw = ImageDraw.Draw(canvas)
+
+        # White page with subtle border
+        draw.rectangle(
+            [INSET, INSET, THUMB_W - INSET - 1, THUMB_H - INSET - 1],
+            fill="white", outline="#8090a8", width=1,
+        )
+
+        avery    = self.format_combo.currentIndex() == 1
+        is_bcode = not avery and self.type_combo.currentIndex() == 1
+
+        def pt2px(v):
+            return max(1, int(v * scale))
+
+        def page_x(x_pt):
+            return INSET + 1 + pt2px(x_pt)
+
+        def page_y(y_pt, h_pt):
+            # PDF y=0 is bottom; PIL y=0 is top
+            return INSET + 1 + pt2px(PAGE_H - y_pt - h_pt)
+
+        def paste_code(instr, x_pt, y_pt, w_pt, h_pt, label_h_pt):
+            px = page_x(x_pt)
+            py = page_y(y_pt, h_pt)
+            pw = pt2px(w_pt)
+            ph = pt2px(h_pt)
+            draw.rectangle([px, py, px + pw, py + ph], outline="#d0d4dc", width=1)
+            try:
+                if is_bcode:
+                    bh = max(4, pt2px(h_pt - label_h_pt) - 2)
+                    bw = max(4, pw - 4)
+                    bc = self._barcode_pil(instr["serial_number"], self._qr_color,
+                                           bar_h_px=bh)
+                    bc = bc.resize((bw, bh), Image.LANCZOS)
+                    canvas.paste(bc, (px + (pw - bw) // 2,
+                                      py + pt2px(label_h_pt) + 1))
+                else:
+                    sz = max(4, min(pw - 4, pt2px(h_pt - label_h_pt) - 2))
+                    qr = self._qr_pil(instr["serial_number"],
+                                      self.style_combo.currentIndex(),
+                                      self._qr_color, sz)
+                    canvas.paste(qr, (px + (pw - sz) // 2,
+                                      py + pt2px(label_h_pt) + 1))
+            except Exception:
+                pass
+
+        if avery:
+            s       = _AVERY_22816
+            lw      = s["label_w"] * 72
+            lh      = s["label_h"] * 72
+            left_m  = s["left_margin"] * 72
+            top_m   = s["top_margin"] * 72
+            col_gap = s["col_gap"] * 72
+            row_gap = s["row_gap"] * 72
+            text_h  = 0.45 * 72
+            total   = s["cols"] * s["rows"]
+            for i, instr in enumerate(selected[:total]):
+                col  = i % s["cols"]
+                row  = i // s["cols"]
+                x_pt = left_m + col * (lw + col_gap)
+                y_pt = PAGE_H - top_m - (row + 1) * lh - row * row_gap
+                paste_code(instr, x_pt, y_pt, lw, lh, text_h)
+        else:
+            margin_pt  = 0.4 * 72
+            gap_pt     = 0.15 * 72
+            label_h_pt = 0.55 * 72
+            size_in    = _SIZE_INCHES[self.size_combo.currentIndex()]
+
+            if is_bcode:
+                bar_h_pt  = size_in * 72
+                cell_w_pt = (PAGE_W - 2 * margin_pt - gap_pt) / 2
+                cell_h_pt = bar_h_pt + label_h_pt + 0.15 * 72
+                cols      = 2
+            else:
+                qr_pt     = size_in * 72
+                cell_w_pt = qr_pt + 0.2 * 72
+                cell_h_pt = qr_pt + label_h_pt + 0.1 * 72
+                cols      = max(1, int((PAGE_W - 2 * margin_pt + gap_pt)
+                                        / (cell_w_pt + gap_pt)))
+
+            x_starts = [margin_pt + i * (cell_w_pt + gap_pt) for i in range(cols)]
+            y_pt   = PAGE_H - margin_pt
+            col_idx = 0
+
+            for instr in selected:
+                if col_idx == 0:
+                    if y_pt - cell_h_pt < margin_pt:
+                        break  # only first page
+                    y_pt -= cell_h_pt
+                paste_code(instr, x_starts[col_idx], y_pt,
+                           cell_w_pt, cell_h_pt, label_h_pt)
+                col_idx = (col_idx + 1) % cols
+
+        buf = io.BytesIO()
+        canvas.save(buf, format="PNG")
+        buf.seek(0)
+        px = QPixmap()
+        px.loadFromData(buf.read())
         return px
 
     # ── Export group ──────────────────────────────────────────────────────────
@@ -299,6 +595,7 @@ class QRCodesTab(QWidget):
 
         self.status_label = QLabel("")
         self.status_label.setObjectName("status")
+        self.status_label.setVisible(False)
         h.addWidget(self.status_label)
         h.addStretch()
         return group
@@ -323,6 +620,7 @@ class QRCodesTab(QWidget):
             cb = QCheckBox(label)
             cb.setChecked(has_serial)
             cb.setEnabled(has_serial)
+            cb.stateChanged.connect(self._update_preview)
             self._list_layout.addWidget(cb)
             self._checkboxes.append((cb, instr))
 
@@ -331,12 +629,18 @@ class QRCodesTab(QWidget):
 
     def _select_all(self):
         for cb, instr in self._checkboxes:
+            cb.blockSignals(True)
             if instr["serial_number"]:
                 cb.setChecked(True)
+            cb.blockSignals(False)
+        self._update_preview()
 
     def _deselect_all(self):
         for cb, _ in self._checkboxes:
+            cb.blockSignals(True)
             cb.setChecked(False)
+            cb.blockSignals(False)
+        self._update_preview()
 
     def _serial_for(self, instr):
         return instr["serial_number"] or ""
@@ -360,8 +664,16 @@ class QRCodesTab(QWidget):
         try:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
             tmp.close()
-            if self._generate(tmp.name):
+            if not self._generate(tmp.name):
+                return
+            try:
                 os.startfile(tmp.name, "print")
+            except OSError:
+                os.startfile(tmp.name)
+                QMessageBox.information(
+                    self, "Print",
+                    "Your PDF viewer has been opened.\nUse File → Print from there to print."
+                )
         except ImportError as e:
             QMessageBox.critical(self, "Missing Library",
                                  f"Required library not installed:\n{e}\n\n"
@@ -377,6 +689,7 @@ class QRCodesTab(QWidget):
         try:
             if self._generate(path):
                 self.status_label.setText("Saved.")
+                self.status_label.setVisible(True)
                 QMessageBox.information(self, "Done", f"PDF saved:\n{path}")
         except ImportError as e:
             QMessageBox.critical(self, "Missing Library",
@@ -506,16 +819,26 @@ class QRCodesTab(QWidget):
         if style_idx == 0:
             img = qr.make_image(fill_color=color, back_color="white")
         else:
-            from qrcode.image.styledimage import StyledPilImage
-            from qrcode.image.styles.moduledrawers import (
-                RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
-            )
+            try:
+                from qrcode.image.styledpil import StyledPilImage
+            except ImportError:
+                from qrcode.image.styledimage import StyledPilImage
+            try:
+                from qrcode.image.styles.moduledrawers.pil import (
+                    RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
+                )
+            except ImportError:
+                from qrcode.image.styles.moduledrawers import (
+                    RoundedModuleDrawer, CircleModuleDrawer, GappedSquareModuleDrawer,
+                )
+            from qrcode.image.styles.colormasks import SolidFillColorMask
             drawer = [None,
                       RoundedModuleDrawer(),
                       CircleModuleDrawer(),
                       GappedSquareModuleDrawer()][style_idx]
+            r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
             img = qr.make_image(image_factory=StyledPilImage, module_drawer=drawer,
-                                fill_color=color, back_color="white")
+                                color_mask=SolidFillColorMask(front_color=(r, g, b)))
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")

@@ -234,6 +234,10 @@ class ReportsTab(QWidget):
         close_btn = QPushButton("Close")
         close_btn.setMinimumHeight(34)
         close_btn.clicked.connect(dlg.reject)
-        v.addWidget(close_btn, alignment=Qt.AlignRight)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 16, 0)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        v.addLayout(btn_row)
 
         dlg.exec()
