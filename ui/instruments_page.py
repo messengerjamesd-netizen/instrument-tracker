@@ -465,6 +465,7 @@ class RepairReturnDialog(QDialog):
 
 class InstrumentsPage(QWidget):
     navigate_to_student = Signal(int)
+    status_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -850,6 +851,7 @@ class InstrumentsPage(QWidget):
                 else:
                     skipped += 1
             self.refresh()
+            self.status_changed.emit()
             msg = f"Resumed {resumed} instrument{'s' if resumed != 1 else ''}."
             if skipped:
                 msg += f"\n{skipped} skipped (no student assigned)."
@@ -865,6 +867,7 @@ class InstrumentsPage(QWidget):
                 else:
                     skipped += 1
             self.refresh()
+            self.status_changed.emit()
             msg = f"Set {applied} instrument{'s' if applied != 1 else ''} to Summer Hold."
             if skipped:
                 msg += (f"\n{skipped} skipped (no student assigned)."
@@ -877,6 +880,7 @@ class InstrumentsPage(QWidget):
             if new_status in REPAIR_STATUSES:
                 db.log_repair_note(instr["id"], new_status, repair_notes)
         self.refresh()
+        self.status_changed.emit()
         QMessageBox.information(self, "Done",
                                 f"Updated {len(selected)} instrument{'s' if len(selected) != 1 else ''}.")
 
@@ -974,6 +978,12 @@ class InstrumentsPage(QWidget):
         new_status = dlg.get_status()
 
         if new_status == "Checked Out":
+            if instr["status"] in REPAIR_STATUSES:
+                ret_dlg = RepairReturnDialog(instr, self)
+                if ret_dlg.exec() != QDialog.Accepted:
+                    return
+                db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+                instr = db.get_instrument_by_id(iid)
             if not self._do_checkout(instr):
                 return
 
@@ -1003,6 +1013,7 @@ class InstrumentsPage(QWidget):
                 db.log_repair_note(iid, new_status, dlg.get_repair_notes())
 
         self.refresh()
+        self.status_changed.emit()
 
     def _delete_instrument(self):
         iids = self._selected_instrument_ids()

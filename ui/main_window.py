@@ -66,6 +66,7 @@ class MainWindow(QMainWindow):
         instruments_page.navigate_to_student.connect(
             lambda sid: (self._navigate(2), students_page.show_student(sid))
         )
+        instruments_page.status_changed.connect(actions_tab._refresh_activity)
 
         self._current_version = ""
         self._pending_download_url = ""
