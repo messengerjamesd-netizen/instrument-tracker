@@ -467,10 +467,10 @@ QPushButton#sidebar_item {{
     border-radius: 0px;
     color: {c['muted']};
     text-align: left;
-    padding: 9px 14px;
+    padding: 9px 12px;
     min-height: 38px;
     font-size: {fs};
-    font-weight: normal;
+    font-weight: bold;
 }}
 QPushButton#sidebar_item:hover:!checked {{
     background-color: {c['tab_hover']};
@@ -480,7 +480,6 @@ QPushButton#sidebar_item:checked {{
     background-color: {c['input_bg']};
     color: {c['text']};
     border-left: 3px solid {c['accent']};
-    font-weight: bold;
 }}
 
 QFrame#sidebar_divider {{

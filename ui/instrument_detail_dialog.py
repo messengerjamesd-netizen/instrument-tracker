@@ -87,7 +87,6 @@ class InstrumentDetailDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
 
         header = QLabel(f"<b>{name}</b>  <span style='color:#5a7aaa'>({serial})</span>")
-        header.setStyleSheet("font-size: 16px;")
         layout.addWidget(header)
 
         tabs = QTabWidget()

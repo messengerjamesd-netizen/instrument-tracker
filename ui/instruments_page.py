@@ -363,7 +363,6 @@ class RepairReturnDialog(QDialog):
         layout.setContentsMargins(18, 18, 18, 18)
 
         hdr = QLabel(f"<b>{name}</b>  <span style='color:#5a7aaa'>({serial})</span>")
-        hdr.setStyleSheet("font-size: 15px;")
         layout.addWidget(hdr)
 
         layout.addWidget(self._sep())
@@ -560,7 +559,7 @@ class InstrumentsPage(QWidget):
 
         # Hint + row count
         hint = QLabel("Tip: Double-click a row to view full history and contracts. Ctrl+click or Shift+click to select multiple for bulk delete.")
-        hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
+        hint.setStyleSheet("color: #5a7aaa; padding: 2px 0;")
         layout.addWidget(hint)
 
         self.row_count_label = QLabel("")

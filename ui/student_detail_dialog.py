@@ -31,7 +31,7 @@ class StudentDetailDialog(QDialog):
         sid  = student["student_id"] if student else ""
         grade = student["grade"] or "" if student else ""
 
-        hdr = QLabel(f"<b style='font-size:16px'>{name}</b>")
+        hdr = QLabel(f"<b>{name}</b>")
         layout.addWidget(hdr)
 
         info_row = QHBoxLayout()

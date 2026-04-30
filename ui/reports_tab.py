@@ -177,7 +177,7 @@ class ReportsTab(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
         lbl = QLabel(title)
-        lbl.setStyleSheet("font-size: 11px; font-weight: bold; color: #8aaad0; text-transform: uppercase; letter-spacing: 1px;")
+        lbl.setStyleSheet("font-weight: bold; color: #8aaad0; letter-spacing: 1px;")
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Plain)

@@ -425,6 +425,14 @@ def get_recent_activity(limit=5):
         """, (limit,)).fetchall()
 
 
+def get_checked_out_for_student(student_db_id):
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM instruments WHERE current_student_id=? AND status IN ('Checked Out', 'Summer Hold')",
+            (student_db_id,),
+        ).fetchall()
+
+
 def get_instrument_history(instrument_db_id):
     with get_connection() as conn:
         return conn.execute("""

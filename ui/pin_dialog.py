@@ -23,7 +23,7 @@ class PINLockDialog(QDialog):
         layout.setContentsMargins(24, 24, 24, 24)
 
         title = QLabel("🔒  Enter PIN to unlock")
-        title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        title.setStyleSheet("font-weight: bold;")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 

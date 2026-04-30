@@ -57,7 +57,7 @@ class CameraDialog(QDialog):
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview.setMinimumHeight(360)
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         layout.addWidget(self.preview)
 
         self.status_label = QLabel("Starting up…")
@@ -142,14 +142,14 @@ class CameraDialog(QDialog):
 
     def _set_live(self):
         # Keep the loading text until the first real frame arrives
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         self.preview.setText("Loading camera preview…")
         self.status_label.setText("Point camera at a QR code…")
 
     def _set_loading(self, msg):
         self.preview.clear()
         self.preview.setText(msg)
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         self.status_label.setText(msg)
 
     def _on_frame(self, frame):
@@ -221,7 +221,7 @@ class PhotoCaptureDialog(QDialog):
         self.preview.setAlignment(Qt.AlignCenter)
         self.preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.preview.setMinimumHeight(380)
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         layout.addWidget(self.preview)
 
         self.status_label = QLabel("Starting up…")
@@ -312,7 +312,7 @@ class PhotoCaptureDialog(QDialog):
             self.preview.setText("Camera unavailable.")
 
     def _set_live(self):
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         self.preview.setText("Loading camera preview…")
         self.status_label.setText("Ready — click Capture Photo when set.")
         self.capture_btn.setEnabled(True)
@@ -321,7 +321,7 @@ class PhotoCaptureDialog(QDialog):
         self.capture_btn.setEnabled(False)
         self.preview.clear()
         self.preview.setText(msg)
-        self.preview.setStyleSheet("color: #5a7aaa; font-size: 15px;")
+        self.preview.setStyleSheet("color: #5a7aaa;")
         self.status_label.setText(msg)
 
     def _on_frame(self, frame):

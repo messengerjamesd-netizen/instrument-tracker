@@ -54,8 +54,12 @@ class MainWindow(QMainWindow):
         outer.addWidget(self._stack, 1)
 
         # Cross-page navigation
+        actions_tab     = self._items[0][1]
         instruments_page = self._items[1][1]
-        students_page = self._items[2][1]
+        students_page    = self._items[2][1]
+        actions_tab.navigate_to_instrument.connect(
+            lambda iid: (self._navigate(1), instruments_page.show_instrument(iid))
+        )
         students_page.navigate_to_instrument.connect(
             lambda iid: (self._navigate(1), instruments_page.show_instrument(iid))
         )
@@ -129,7 +133,7 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self):
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(190)
+        sidebar.setMinimumWidth(160)
 
         v = QVBoxLayout(sidebar)
         v.setContentsMargins(0, 14, 0, 14)

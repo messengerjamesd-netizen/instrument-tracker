@@ -5,7 +5,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QSizePolicy, QFrame, QDialogButtonBox, QPlainTextEdit,
-    QFileDialog, QCompleter,
+    QFileDialog, QCompleter, QMessageBox,
 )
 import database as db
 from ui.camera_dialog import PhotoCaptureDialog
@@ -39,7 +39,6 @@ class CheckoutDialog(QDialog):
 
         # Instrument header
         hdr = QLabel(f"<b>{name}</b>  <span style='color:#5a7aaa'>({serial})</span>")
-        hdr.setStyleSheet("font-size: 15px;")
         layout.addWidget(hdr)
 
         layout.addWidget(self._separator())
@@ -187,4 +186,16 @@ class CheckoutDialog(QDialog):
     def _confirm(self):
         self.selected_student_id = self.student_combo.currentData()
         self.notes = self.notes_edit.toPlainText().strip()
+        if self.selected_student_id:
+            existing = db.get_checked_out_for_student(self.selected_student_id)
+            if existing:
+                names = "\n".join(f"  • {r['name']}" for r in existing)
+                reply = QMessageBox.question(
+                    self, "Student Already Has Instrument Out",
+                    f"This student already has {len(existing)} instrument(s) checked out:\n\n"
+                    f"{names}\n\nCheck out an additional instrument anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                )
+                if reply != QMessageBox.Yes:
+                    return
         self.accept()

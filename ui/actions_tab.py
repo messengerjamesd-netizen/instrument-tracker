@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, Signal, QRect, QPropertyAnimation, QEasingCurve, Property, QTimer
+from PySide6.QtGui import QPixmap, QPainter, QColor, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QDialog, QMessageBox, QSizePolicy, QFrame, QDialogButtonBox,
@@ -39,16 +39,97 @@ def _relative_time(timestamp_str):
         return timestamp_str
 
 
+class _PillToggle(QWidget):
+    """Animated pill-style toggle between two options."""
+    def __init__(self, labels, parent=None):
+        super().__init__(parent)
+        self._labels = labels
+        self._selected = 0
+        self.setFixedHeight(54)
+        self.setCursor(Qt.PointingHandCursor)
+        self._anim = QPropertyAnimation(self, b"pill_x", self)
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._pill_x = 0.0
+
+    def selected(self):
+        return self._selected
+
+    def get_pill_x(self): return getattr(self, '_pill_x', 0.0)
+    def set_pill_x(self, v):
+        self._pill_x = v
+        self.update()
+    pill_x = Property(float, get_pill_x, set_pill_x)
+
+    def mousePressEvent(self, e):
+        idx = 0 if e.position().x() < self.width() / 2 else 1
+        if idx != self._selected:
+            self._selected = idx
+            self._anim.setStartValue(self._pill_x)
+            self._anim.setEndValue((self.width() / 2) * idx)
+            self._anim.start()
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = self.rect()
+
+        track = QPainterPath()
+        track.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 10, 10)
+        p.fillPath(track, QColor("#0f2040"))
+        p.setPen(QPen(QColor("#1a3666"), 1))
+        p.drawPath(track)
+
+        pw = r.width() / 2 - 4
+        pill = QPainterPath()
+        pill.addRoundedRect(self._pill_x + 2, 3, pw, r.height() - 6, 8, 8)
+        p.fillPath(pill, QColor("#1a4a8a"))
+        p.setPen(Qt.NoPen)
+
+        half = r.width() // 2
+        for i, lbl in enumerate(self._labels):
+            p.setPen(QColor("#ffffff" if i == self._selected else "#8aaad0"))
+            p.setFont(self.font())
+            p.drawText(QRect(i * half, 0, half, r.height()), Qt.AlignCenter, lbl)
+
+        p.end()
+
+
 class _CardButton(QFrame):
     """Clickable card widget used for the main action buttons."""
     clicked = Signal()
 
     def __init__(self, icon, title, desc, primary=False, parent=None):
         super().__init__(parent)
+        self._primary = primary
         self.setCursor(Qt.PointingHandCursor)
-        bg     = "#102a5a" if primary else "#0f2040"
-        border = "#2d6bc4" if primary else "#1a3666"
+        self._apply_normal_style()
+
         title_color = "#7eb8f7" if primary else "#ffffff"
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 26, 24, 26)
+        layout.setSpacing(8)
+        layout.setAlignment(Qt.AlignCenter)
+
+        icon_lbl = QLabel(icon)
+        icon_lbl.setAlignment(Qt.AlignCenter)
+        icon_lbl.setStyleSheet("font-size: 34px; background: transparent; border: none;")
+        title_lbl = QLabel(title)
+        title_lbl.setAlignment(Qt.AlignCenter)
+        title_lbl.setStyleSheet(f"font-weight: bold; color: {title_color}; background: transparent; border: none;")
+        desc_lbl = QLabel(desc)
+        desc_lbl.setAlignment(Qt.AlignCenter)
+        desc_lbl.setStyleSheet("color: #5a7aaa; background: transparent; border: none;")
+        desc_lbl.setWordWrap(True)
+
+        layout.addWidget(icon_lbl)
+        layout.addWidget(title_lbl)
+        layout.addWidget(desc_lbl)
+
+    def _apply_normal_style(self):
+        p = self._primary
+        bg     = "#102a5a" if p else "#0f2040"
+        border = "#2d6bc4" if p else "#1a3666"
         self.setStyleSheet(f"""
             _CardButton {{
                 background: {bg};
@@ -56,25 +137,10 @@ class _CardButton(QFrame):
                 border-radius: 10px;
             }}
             _CardButton:hover {{
-                background: {"#1a3a70" if primary else "#162840"};
-                border-color: {"#4a8ae4" if primary else "#2d6bc4"};
+                background: {"#1a3a70" if p else "#162840"};
+                border-color: {"#4a8ae4" if p else "#2d6bc4"};
             }}
         """)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 18)
-        layout.setSpacing(6)
-
-        icon_lbl = QLabel(icon)
-        icon_lbl.setStyleSheet("font-size: 26px; background: transparent; border: none;")
-        title_lbl = QLabel(title)
-        title_lbl.setStyleSheet(f"font-size: 17px; font-weight: bold; color: {title_color}; background: transparent; border: none;")
-        desc_lbl = QLabel(desc)
-        desc_lbl.setStyleSheet("font-size: 12px; color: #5a7aaa; background: transparent; border: none;")
-        desc_lbl.setWordWrap(True)
-
-        layout.addWidget(icon_lbl)
-        layout.addWidget(title_lbl)
-        layout.addWidget(desc_lbl)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -219,7 +285,55 @@ class CheckinDialog(QDialog):
         self.accept()
 
 
+class _ResponsiveCards(QWidget):
+    """Lays out two cards side-by-side above 500px, stacked below."""
+    def __init__(self, card1, card2, parent=None):
+        super().__init__(parent)
+        self._card1 = card1
+        self._card2 = card2
+        card1.setParent(self)
+        card2.setParent(self)
+        self._horizontal = True
+
+    def sizeHint(self):
+        from PySide6.QtCore import QSize
+        ch = max(self._card1.sizeHint().height(), self._card2.sizeHint().height())
+        return QSize(400, ch)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        w = self.width()
+        gap = 16
+        if w >= 500:
+            half = (w - gap) // 2
+            h = max(self._card1.sizeHint().height(), self._card2.sizeHint().height())
+            self._card1.setGeometry(0, 0, half, h)
+            self._card2.setGeometry(half + gap, 0, w - half - gap, h)
+            self.setFixedHeight(h)
+        else:
+            h = self._card1.sizeHint().height()
+            self._card1.setGeometry(0, 0, w, h)
+            self._card2.setGeometry(0, h + gap, w, h)
+            self.setFixedHeight(h * 2 + gap)
+
+
+class _ClickableFrame(QFrame):
+    clicked = Signal(int)
+
+    def __init__(self, instrument_id, parent=None):
+        super().__init__(parent)
+        self._instrument_id = instrument_id
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self._instrument_id)
+        super().mousePressEvent(event)
+
+
 class ActionsTab(QWidget):
+    navigate_to_instrument = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._activity_items = []
@@ -230,99 +344,35 @@ class ActionsTab(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Scroll area so content works at any window size
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        outer.addWidget(scroll)
+        # ── Fixed top section (toggle + cards) ───────────────────────────────
+        top = QWidget()
+        top_layout = QVBoxLayout(top)
+        top_layout.setContentsMargins(40, 40, 40, 20)
+        top_layout.setSpacing(16)
 
-        container = QWidget()
-        scroll.setWidget(container)
-
-        # Centering: stretch | fixed-width inner | stretch
-        page = QVBoxLayout(container)
-        page.setContentsMargins(40, 40, 40, 40)
-        page.setSpacing(0)
-        page.addStretch()
-
-        inner = QWidget()
-        inner.setMaximumWidth(560)
-        inner_layout = QVBoxLayout(inner)
-        inner_layout.setContentsMargins(0, 0, 0, 0)
-        inner_layout.setSpacing(16)
-
-        # Title
         title = QLabel("Instrument Actions")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #e8f0ff;")
-        inner_layout.addWidget(title)
+        title.setObjectName("section_title")
+        top_layout.addWidget(title)
 
-        # Scan mode toggle
-        mode_label = QLabel("How are you scanning?")
-        mode_label.setStyleSheet("font-size: 13px; color: #8aaad0;")
-        inner_layout.addWidget(mode_label)
+        self._mode_toggle = _PillToggle(["📷  Camera", "⌨️  Manual / Scanner"])
+        top_layout.addWidget(self._mode_toggle)
 
-        toggle_frame = QFrame()
-        toggle_frame.setStyleSheet(
-            "QFrame { border: 1px solid #1a3666; border-radius: 6px; }"
-        )
-        toggle_frame.setFixedHeight(44)
-        toggle_layout = QHBoxLayout(toggle_frame)
-        toggle_layout.setContentsMargins(0, 0, 0, 0)
-        toggle_layout.setSpacing(0)
+        # Responsive card row — switches to vertical below 500px wide
+        self._co_card = _CardButton("📤", "Check Out", "Assign an instrument to a student.", primary=True)
+        self._co_card.clicked.connect(self._checkout)
+        self._ci_card = _CardButton("📥", "Check In", "Return an instrument to inventory.")
+        self._ci_card.clicked.connect(self._checkin)
 
-        self._btn_camera  = QPushButton("📷  Camera")
-        self._btn_scanner = QPushButton("⌨️  Type Manually / External Scanner")
+        cards = _ResponsiveCards(self._co_card, self._ci_card)
+        top_layout.addWidget(cards)
+        top_layout.addSpacing(12)
 
-        btn_style = """
-            QPushButton {{
-                font-size: 14px; font-weight: bold;
-                background: #0f2040; color: #8aaad0;
-                border: none;
-                border-radius: 0px;
-            }}
-            QPushButton:checked {{
-                background: #1a4a8a; color: #ffffff;
-            }}
-        """
-        self._btn_camera.setStyleSheet(
-            btn_style + "QPushButton { border-radius: 5px 0 0 5px; }"
-        )
-        self._btn_scanner.setStyleSheet(
-            btn_style + "QPushButton { border-radius: 0 5px 5px 0; }"
-        )
-
-        for btn in (self._btn_camera, self._btn_scanner):
-            btn.setCheckable(True)
-            btn.setMinimumWidth(0)
-            btn.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-            toggle_layout.addWidget(btn, 1)
-
-        self._mode_group = QButtonGroup(self)
-        self._mode_group.addButton(self._btn_camera, 0)
-        self._mode_group.addButton(self._btn_scanner, 1)
-        self._btn_camera.setChecked(True)
-        inner_layout.addWidget(toggle_frame)
-
-        # Card buttons (Check Out / Check In)
-        cards_row = QHBoxLayout()
-        cards_row.setSpacing(16)
-
-        co_card = _CardButton("📤", "Check Out", "Assign an instrument to a student.", primary=True)
-        co_card.clicked.connect(self._checkout)
-        ci_card = _CardButton("📥", "Check In", "Return an instrument to inventory.")
-        ci_card.clicked.connect(self._checkin)
-
-        cards_row.addWidget(co_card)
-        cards_row.addWidget(ci_card)
-        inner_layout.addLayout(cards_row)
-
-        # Recent activity section header
+        # Recent activity header
         divider_row = QHBoxLayout()
         divider_row.setSpacing(10)
         act_label = QLabel("RECENT ACTIVITY")
         act_label.setStyleSheet(
-            "font-size: 11px; font-weight: bold; color: #8aaad0; letter-spacing: 1px;"
+            "font-weight: bold; color: #8aaad0; letter-spacing: 1px;"
         )
         divider_row.addWidget(act_label)
         line = QFrame()
@@ -330,21 +380,28 @@ class ActionsTab(QWidget):
         line.setStyleSheet("color: #1a3666;")
         line.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         divider_row.addWidget(line)
-        inner_layout.addLayout(divider_row)
+        top_layout.addLayout(divider_row)
 
-        # Activity list placeholder — populated by _refresh_activity
+        outer.addWidget(top)
+
+        # ── Scrollable activity list ──────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
+
+        activity_container = QWidget()
+        scroll.setWidget(activity_container)
+
+        activity_page = QVBoxLayout(activity_container)
+        activity_page.setContentsMargins(40, 8, 40, 40)
+        activity_page.setSpacing(0)
+
         self._activity_layout = QVBoxLayout()
         self._activity_layout.setSpacing(6)
-        inner_layout.addLayout(self._activity_layout)
-
-        # Center the inner widget horizontally
-        h = QHBoxLayout()
-        h.setContentsMargins(0, 0, 0, 0)
-        h.addStretch()
-        h.addWidget(inner)
-        h.addStretch()
-        page.addLayout(h)
-        page.addStretch()
+        activity_page.addLayout(self._activity_layout)
+        activity_page.addStretch()
 
         self._refresh_activity()
 
@@ -355,10 +412,10 @@ class ActionsTab(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        rows = db.get_recent_activity(5)
+        rows = db.get_recent_activity(20)
         if not rows:
             empty = QLabel("No activity yet.")
-            empty.setStyleSheet("font-size: 13px; color: #3a5a8a; padding: 10px 0;")
+            empty.setStyleSheet("color: #3a5a8a; padding: 10px 0;")
             self._activity_layout.addWidget(empty)
             return
 
@@ -371,9 +428,11 @@ class ActionsTab(QWidget):
             label   = ACTION_LABELS.get(action, action)
             is_out  = action in ("check_out",)
 
-            item_frame = QFrame()
+            item_frame = _ClickableFrame(row["instrument_id"])
+            item_frame.clicked.connect(self.navigate_to_instrument)
             item_frame.setStyleSheet(
-                "QFrame { background: #0d1e3a; border: 1px solid #1a3666; border-radius: 6px; }"
+                "_ClickableFrame { background: #0d1e3a; border: 1px solid #1a3666; border-radius: 6px; }"
+                "_ClickableFrame:hover { border-color: #2d6bc4; }"
             )
             item_layout = QHBoxLayout(item_frame)
             item_layout.setContentsMargins(14, 10, 14, 10)
@@ -384,7 +443,7 @@ class ActionsTab(QWidget):
             left.setSpacing(2)
             name_lbl = QLabel(f"{instr}{(' (S/N: ' + serial + ')') if serial else ''}")
             name_lbl.setStyleSheet(
-                "font-size: 13px; font-weight: 600; color: #c8d8f0; background: transparent; border: none;"
+                "font-weight: 600; color: #c8d8f0; background: transparent; border: none;"
             )
             left.addWidget(name_lbl)
 
@@ -394,7 +453,7 @@ class ActionsTab(QWidget):
                 detail_text = label
             detail_lbl = QLabel(detail_text)
             detail_lbl.setStyleSheet(
-                "font-size: 12px; color: #5a7aaa; background: transparent; border: none;"
+                "color: #5a7aaa; background: transparent; border: none;"
             )
             left.addWidget(detail_lbl)
             item_layout.addLayout(left, 1)
@@ -406,7 +465,7 @@ class ActionsTab(QWidget):
 
             badge_text  = "Out" if is_out else "In"
             badge_style = (
-                "font-size: 11px; font-weight: bold; padding: 3px 8px; border-radius: 4px; "
+                "font-weight: bold; padding: 2px 6px; border-radius: 4px; "
                 + ("background: #1a3a1a; color: #6abf6a; border: 1px solid #2a5a2a;"
                    if is_out else
                    "background: #1a2a4a; color: #7eb8f7; border: 1px solid #1a3666;")
@@ -418,7 +477,7 @@ class ActionsTab(QWidget):
 
             time_lbl = QLabel(ts)
             time_lbl.setStyleSheet(
-                "font-size: 11px; color: #3a5a8a; background: transparent; border: none;"
+                "color: #3a5a8a; background: transparent; border: none;"
             )
             time_lbl.setAlignment(Qt.AlignRight)
             right.addWidget(time_lbl)
@@ -447,7 +506,7 @@ class ActionsTab(QWidget):
         return box.exec() == QMessageBox.Yes
 
     def _get_qr_code(self, title):
-        if self._mode_group.checkedId() == 1:
+        if self._mode_toggle.selected() == 1:
             dlg = ScannerInputDialog(title, self)
         else:
             dlg = CameraDialog(self, title)

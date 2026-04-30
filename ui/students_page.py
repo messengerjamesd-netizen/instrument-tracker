@@ -160,7 +160,7 @@ class StudentsPage(QWidget):
 
         # Hint + row count
         hint = QLabel("Tip: Double-click a row to view a student's full instrument history. Ctrl+click or Shift+click to select multiple for bulk delete.")
-        hint.setStyleSheet("font-size: 11px; color: #5a7aaa; padding: 2px 0;")
+        hint.setStyleSheet("color: #5a7aaa; padding: 2px 0;")
         layout.addWidget(hint)
 
         self.row_count_label = QLabel("")
