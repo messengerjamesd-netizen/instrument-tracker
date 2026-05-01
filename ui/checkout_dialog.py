@@ -186,6 +186,9 @@ class CheckoutDialog(QDialog):
     def _confirm(self):
         self.selected_student_id = self.student_combo.currentData()
         self.notes = self.notes_edit.toPlainText().strip()
+        if self.selected_student_id is None:
+            QMessageBox.warning(self, "No Student Selected", "Please select a student before confirming.")
+            return
         if self.selected_student_id:
             existing = db.get_checked_out_for_student(self.selected_student_id)
             if existing:

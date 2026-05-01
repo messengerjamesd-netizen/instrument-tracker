@@ -306,7 +306,10 @@ class BulkChangeStatusDialog(QDialog):
     def _apply_filter(self):
         filter_status = self._filter_combo.currentData()
         for cb, instr in self._checkboxes:
-            cb.setVisible(not filter_status or instr["status"] == filter_status)
+            visible = not filter_status or instr["status"] == filter_status
+            cb.setVisible(visible)
+            if not visible:
+                cb.setChecked(False)
 
     def _select_all_visible(self):
         for cb, _ in self._checkboxes:
@@ -560,7 +563,7 @@ class InstrumentsPage(QWidget):
         layout.addWidget(self.table)
 
         # Hint + row count
-        hint = QLabel("Tip: Double-click a row to view full history and contracts. Ctrl+click or Shift+click to select multiple for bulk delete.")
+        hint = QLabel("Tip: Right-click a row to change its status. Double-click to view full history and contracts. Ctrl+click or Shift+click to select multiple for bulk actions.")
         hint.setStyleSheet("color: #5a7aaa; padding: 2px 0;")
         layout.addWidget(hint)
 
@@ -616,7 +619,15 @@ class InstrumentsPage(QWidget):
         self.table.setSortingEnabled(False)
         self.table.setRowCount(len(rows))
         for r, instr in enumerate(rows):
-            display_students = instr["all_student_names"] or instr["student_name"] or "N/A"
+            all_names_raw = instr["all_student_names"] or instr["student_name"] or ""
+            if all_names_raw:
+                name_list = [n.strip() for n in all_names_raw.split(",") if n.strip()]
+                if len(name_list) > 1:
+                    display_students = f"{name_list[0]} + {len(name_list) - 1} more"
+                else:
+                    display_students = name_list[0] if name_list else "N/A"
+            else:
+                display_students = "N/A"
             vals = [
                 str(instr["id"]),
                 instr["name"] or "",
@@ -637,7 +648,10 @@ class InstrumentsPage(QWidget):
             student_item = self.table.item(r, 5)
             if student_id and student_item:
                 student_item.setForeground(QColor("#7eb8f7"))
-                student_item.setToolTip("Click to view this student")
+                if all_names_raw and "," in all_names_raw:
+                    student_item.setToolTip(all_names_raw.replace(",", "\n"))
+                else:
+                    student_item.setToolTip("Click to view this student")
                 student_item.setData(Qt.UserRole + 1, student_id)
 
             status_item = self.table.item(r, 4)
@@ -990,6 +1004,14 @@ class InstrumentsPage(QWidget):
                 fresh = db.get_instrument_by_id(instr["id"])
                 if not fresh:
                     continue
+                iid = fresh["id"]
+                if fresh["status"] in REPAIR_STATUSES:
+                    ret_dlg = RepairReturnDialog(fresh, self)
+                    if ret_dlg.exec() != QDialog.Accepted:
+                        cancelled += 1
+                        continue
+                    db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+                    fresh = db.get_instrument_by_id(iid)
                 if not self._do_checkout(fresh):
                     cancelled += 1
                     continue
@@ -1017,6 +1039,34 @@ class InstrumentsPage(QWidget):
             if skipped:
                 msg += (f"\n{skipped} skipped (no student assigned)."
                         "\nUse Change Status on each to assign a student first.")
+            QMessageBox.information(self, "Done", msg)
+            return
+
+        if new_status == "Available":
+            applied, cancelled = 0, 0
+            for instr in selected:
+                iid = instr["id"]
+                if instr["status"] in REPAIR_STATUSES:
+                    ret_dlg = RepairReturnDialog(instr, self)
+                    if ret_dlg.exec() != QDialog.Accepted:
+                        cancelled += 1
+                        continue
+                    db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+                else:
+                    active = db.get_instrument_active_checkouts(iid)
+                    ci_dlg = CheckinDialog(instr, self, active_checkouts=active)
+                    if ci_dlg.exec() != QDialog.Accepted:
+                        cancelled += 1
+                        continue
+                    db.checkin_instrument(iid, notes=ci_dlg.notes,
+                                          condition_photo_path=ci_dlg.condition_photo_path,
+                                          student_db_id=ci_dlg.student_db_id)
+                applied += 1
+            self.refresh()
+            self.status_changed.emit()
+            msg = f"Checked in {applied} instrument{'s' if applied != 1 else ''}."
+            if cancelled:
+                msg += f"\n{cancelled} skipped or cancelled."
             QMessageBox.information(self, "Done", msg)
             return
 
@@ -1129,6 +1179,8 @@ class InstrumentsPage(QWidget):
                     return
                 db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
                 instr = db.get_instrument_by_id(iid)
+                if not instr:
+                    return
             if not self._do_checkout(instr):
                 return
 
@@ -1157,6 +1209,8 @@ class InstrumentsPage(QWidget):
                     return
                 db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
                 instr = db.get_instrument_by_id(iid)
+                if not instr:
+                    return
             if not self._do_summer_hold(instr):
                 return
 

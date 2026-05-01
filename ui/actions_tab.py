@@ -392,7 +392,13 @@ class ActionsTab(QWidget):
 
         cards = _ResponsiveCards(self._co_card, self._ci_card)
         top_layout.addWidget(cards)
-        top_layout.addSpacing(12)
+
+        self._status_label = QLabel("")
+        self._status_label.setAlignment(Qt.AlignCenter)
+        self._status_label.setStyleSheet("color: #5dbb7e; font-weight: bold; padding: 4px 0;")
+        self._status_label.setVisible(False)
+        top_layout.addWidget(self._status_label)
+        top_layout.addSpacing(4)
 
         # Recent activity header
         divider_row = QHBoxLayout()
@@ -431,6 +437,12 @@ class ActionsTab(QWidget):
         activity_page.addStretch()
 
         self._refresh_activity()
+
+    def _show_status(self, message, color="#5dbb7e"):
+        self._status_label.setText(message)
+        self._status_label.setStyleSheet(f"color: {color}; font-weight: bold; padding: 4px 0;")
+        self._status_label.setVisible(True)
+        QTimer.singleShot(4000, lambda: self._status_label.setVisible(False))
 
     def refresh(self):
         self._refresh_activity()
@@ -615,10 +627,7 @@ class ActionsTab(QWidget):
             )
 
         student = db.get_student_by_id(co_dlg.selected_student_id)
-        QMessageBox.information(
-            self, "Checked Out",
-            f"{instrument['name']} checked out to {student['name']}.",
-        )
+        self._show_status(f"✓  {instrument['name']} checked out to {student['name']}.")
         self._refresh_activity()
 
     # ── Checkin ───────────────────────────────────────────────────────────────
@@ -661,8 +670,7 @@ class ActionsTab(QWidget):
             student_db_id=ci_dlg.student_db_id,
         )
         if ci_dlg.student_db_id and len(active_checkouts) > 1:
-            QMessageBox.information(self, "Checked In",
-                                    f"{instr_label} — student removed, still checked out to remaining student(s).")
+            self._show_status(f"✓  {instr_label} — student removed, still checked out to remaining student(s).")
         else:
-            QMessageBox.information(self, "Checked In", f"{instr_label} is now Available.")
+            self._show_status(f"✓  {instr_label} checked in — now Available.")
         self._refresh_activity()

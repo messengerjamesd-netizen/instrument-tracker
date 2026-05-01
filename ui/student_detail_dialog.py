@@ -41,22 +41,18 @@ class StudentDetailDialog(QDialog):
         info_row.addStretch()
         layout.addLayout(info_row)
 
-        # Current instrument
-        instruments = db.get_all_instruments()
-        current = next(
-            (i for i in instruments
-             if i["current_student_id"] == student_db_id),
-            None,
-        )
-        if current:
-            cur_label = QLabel(
-                f"Currently has: <b>{current['name']}"
-                f"{' — ' + current['model'] if current['model'] else ''}</b>"
-                f"  <span style='color:#5a7aaa'>S/N: {current['serial_number'] or '—'}</span>"
-            )
+        # Current instruments (junction table — handles multi-student checkouts)
+        current_instruments = db.get_checked_out_for_student(student_db_id)
+        if current_instruments:
+            for instr in current_instruments:
+                cur_label = QLabel(
+                    f"Currently has: <b>{instr['name']}"
+                    f"{' — ' + instr['model'] if instr['model'] else ''}</b>"
+                    f"  <span style='color:#5a7aaa'>S/N: {instr['serial_number'] or '—'}</span>"
+                )
+                layout.addWidget(cur_label)
         else:
-            cur_label = QLabel("No instrument currently checked out.")
-        layout.addWidget(cur_label)
+            layout.addWidget(QLabel("No instrument currently checked out."))
 
         layout.addWidget(self._separator())
         layout.addWidget(QLabel("<b>Instrument History</b>"))

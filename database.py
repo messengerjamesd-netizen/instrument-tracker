@@ -289,10 +289,11 @@ def update_instrument(instrument_db_id, name, model, serial_number):
         )
 
 
+STATUSES_THAT_CLEAR_STUDENTS = {"Available", "Needs Repair", "Out for Repair"}
+
 def update_instrument_status(instrument_db_id, status):
     with get_connection() as conn:
-        if status == "Available":
-            # Clearing to available also removes the assigned student and all junction rows
+        if status in STATUSES_THAT_CLEAR_STUDENTS:
             conn.execute(
                 "UPDATE instruments SET status=?, current_student_id=NULL WHERE id=?",
                 (status, instrument_db_id),
@@ -418,8 +419,8 @@ def checkin_instrument(instrument_db_id, notes="", condition_photo_path="",
                 # Still has other students — update primary student, stay checked out
                 new_primary = remaining[0]["student_id"]
                 conn.execute(
-                    "UPDATE instruments SET current_student_id=? WHERE id=?",
-                    (new_primary, instrument_db_id),
+                    "UPDATE instruments SET current_student_id=?, last_checked_in=? WHERE id=?",
+                    (new_primary, now, instrument_db_id),
                 )
             else:
                 # No one left — fully available
@@ -475,8 +476,8 @@ def log_repair_return(instrument_db_id, notes="", invoice_path=""):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
-            "UPDATE instruments SET status='Available', current_student_id=NULL WHERE id=?",
-            (instrument_db_id,),
+            "UPDATE instruments SET status='Available', current_student_id=NULL, last_checked_in=? WHERE id=?",
+            (now, instrument_db_id),
         )
         conn.execute("DELETE FROM instrument_checkouts WHERE instrument_id=?", (instrument_db_id,))
         conn.execute(
