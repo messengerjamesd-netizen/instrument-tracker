@@ -39,12 +39,12 @@ def _find_col(row, *aliases):
 
 
 def _read_spreadsheet(path):
-    """Return list of dicts from CSV/TSV/XLSX/XLS/ODS. First row = headers."""
+    """Return list of dicts from CSV/TSV/XLSX/XLS. First row = headers."""
     ext = os.path.splitext(path)[1].lower()
     if ext == ".tsv":
         with open(path, newline="", encoding="utf-8-sig") as f:
             return list(csv.DictReader(f, delimiter="\t"))
-    if ext in (".xlsx", ".ods"):
+    if ext == ".xlsx":
         import openpyxl
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
         ws = wb.active
@@ -514,7 +514,7 @@ class InstrumentsPage(QWidget):
         import_btn.setMinimumHeight(32)
         import_btn.setToolTip(
             "Expected columns: Name, Model, Serial Number\n"
-            "Supports .csv, .tsv, .xlsx, .xls, .ods"
+            "Supports .csv, .tsv, .xlsx, .xls"
         )
         import_btn.clicked.connect(self._import_spreadsheet)
         toolbar.addWidget(import_btn)
@@ -529,6 +529,19 @@ class InstrumentsPage(QWidget):
         add_btn.setMinimumHeight(32)
         add_btn.clicked.connect(self._add_instrument)
         toolbar.addWidget(add_btn)
+
+        help_btn = QPushButton("?")
+        help_btn.setMinimumHeight(32)
+        help_btn.setFixedWidth(32)
+        help_btn.setFocusPolicy(Qt.NoFocus)
+        help_btn.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
+        help_btn.clicked.connect(lambda: QMessageBox.information(
+            self, "Tips",
+            "Right-click the Status column to change an instrument's status.\n\n"
+            "Double-click a row to view full history and contracts.\n\n"
+            "Ctrl+click or Shift+click to select multiple rows for bulk actions."
+        ))
+        toolbar.addWidget(help_btn)
 
         layout.addLayout(toolbar)
 
@@ -562,39 +575,64 @@ class InstrumentsPage(QWidget):
         self._hovered_link_cell = None
         layout.addWidget(self.table)
 
-        # Hint + row count
-        hint = QLabel("Tip: Right-click a row to change its status. Double-click to view full history and contracts. Ctrl+click or Shift+click to select multiple for bulk actions.")
-        hint.setStyleSheet("color: #5a7aaa; padding: 2px 0;")
-        layout.addWidget(hint)
-
         self.row_count_label = QLabel("")
         self.row_count_label.setObjectName("status")
         layout.addWidget(self.row_count_label)
 
-        # Bottom action bar
-        bottom = QWidget()
-        bottom.setObjectName("bottom_bar")
-        bar = QHBoxLayout(bottom)
-        bar.setContentsMargins(8, 6, 8, 6)
-        bar.setSpacing(8)
-
-        def bar_btn(text, slot, danger=False):
+        # Bottom action bar — adaptive (single row wide, two rows narrow)
+        def mk(text, slot, danger=False, fixed=False):
             btn = QPushButton(text)
             btn.setMinimumHeight(34)
-            btn.setMinimumWidth(60)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(
+                QSizePolicy.Preferred if fixed else QSizePolicy.Expanding,
+                QSizePolicy.Fixed)
             if danger:
                 btn.setObjectName("danger")
             btn.clicked.connect(slot)
-            bar.addWidget(btn)
             return btn
 
-        bar_btn("Edit Details", self._edit_instrument)
-        bar_btn("Change Status", self._change_status)
-        bar_btn("Delete", self._delete_instrument, danger=True)
-        bar_btn("History / Contracts", self._view_details)
+        def sep():
+            f = QFrame()
+            f.setFrameShape(QFrame.VLine)
+            f.setFrameShadow(QFrame.Plain)
+            return f
 
-        layout.addWidget(bottom)
+        self._wide_bar = QWidget()
+        self._wide_bar.setObjectName("bottom_bar")
+        wide = QHBoxLayout(self._wide_bar)
+        wide.setContentsMargins(8, 6, 8, 6)
+        wide.setSpacing(8)
+        wide.addWidget(mk("Edit", self._edit_instrument, fixed=True))
+        wide.addWidget(mk("Delete", self._delete_instrument, danger=True, fixed=True))
+        wide.addWidget(sep())
+        wide.addWidget(mk("Change Status", self._change_status))
+        wide.addWidget(mk("History / Contracts", self._view_details))
+
+        self._narrow_bar = QWidget()
+        self._narrow_bar.setObjectName("bottom_bar")
+        narrow = QVBoxLayout(self._narrow_bar)
+        narrow.setContentsMargins(8, 4, 8, 4)
+        narrow.setSpacing(4)
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(mk("Edit", self._edit_instrument))
+        row1.addWidget(mk("Delete", self._delete_instrument, danger=True))
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        row2.addWidget(mk("Change Status", self._change_status))
+        row2.addWidget(mk("History / Contracts", self._view_details))
+        narrow.addLayout(row1)
+        narrow.addLayout(row2)
+        self._narrow_bar.hide()
+
+        layout.addWidget(self._wide_bar)
+        layout.addWidget(self._narrow_bar)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        narrow = event.size().width() < 500
+        self._wide_bar.setVisible(not narrow)
+        self._narrow_bar.setVisible(narrow)
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -872,6 +910,14 @@ class InstrumentsPage(QWidget):
             return
         new_status = chosen.text()
         if new_status == "Checked Out":
+            if instr["status"] in REPAIR_STATUSES:
+                ret_dlg = RepairReturnDialog(instr, self)
+                if ret_dlg.exec() != QDialog.Accepted:
+                    return
+                db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
+                instr = db.get_instrument_by_id(iid)
+                if not instr:
+                    return
             if not self._do_checkout(instr):
                 return
         elif new_status == "Available":
@@ -1093,7 +1139,7 @@ class InstrumentsPage(QWidget):
     def _import_spreadsheet(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select File", "",
-            "Spreadsheets & CSV (*.csv *.tsv *.xlsx *.xls *.ods);;All Files (*)"
+            "Spreadsheets & CSV (*.csv *.tsv *.xlsx *.xls);;All Files (*)"
         )
         if not path:
             return

@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-APP_VERSION     = "2.5.1"
+APP_VERSION     = "2.5.2"
 APP_GITHUB_REPO = "messengerjamesd-netizen/instrument-tracker"
 
 def _splash_msg(splash, app, text):
@@ -101,17 +101,10 @@ def main():
         if pin_dlg.exec() != QDialog.Accepted:
             sys.exit(0)
 
-    original_flags = window.windowFlags()
-    window.setWindowFlags(original_flags | Qt.WindowStaysOnTopHint)
     window.showMaximized()
     splash.finish(window)
-
-    def _drop_always_on_top():
-        window.setWindowFlags(original_flags)
-        window.showMaximized()
-
-    from PySide6.QtCore import QTimer
-    QTimer.singleShot(500, _drop_always_on_top)
+    window.raise_()
+    window.activateWindow()
 
     # Start update check in background (no-op if repo is placeholder or offline)
     if not APP_GITHUB_REPO.startswith("PLACEHOLDER"):

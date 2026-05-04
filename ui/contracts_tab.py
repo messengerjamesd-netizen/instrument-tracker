@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QTextEdit, QComboBox, QGroupBox,
     QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QFileDialog, QDialog, QSizePolicy,
+    QMessageBox, QFileDialog, QDialog, QSizePolicy, QFrame,
 )
 import database as db
 from ui.camera_dialog import PhotoCaptureDialog
@@ -48,30 +48,52 @@ class ContractsTab(QWidget):
         self.table.verticalHeader().setVisible(False)
         layout.addWidget(self.table)
 
-        # Bottom bar
-        bottom = QWidget()
-        bottom.setObjectName("bottom_bar")
-        bar = QHBoxLayout(bottom)
-        bar.setContentsMargins(8, 6, 8, 6)
-        bar.setSpacing(8)
-
-        def bar_btn(text, slot, danger=False):
+        # Bottom bar — adaptive (single row wide, two rows narrow)
+        def mk(text, slot, danger=False, fixed=False):
             btn = QPushButton(text)
             btn.setMinimumHeight(34)
-            btn.setMinimumWidth(60)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(
+                QSizePolicy.Preferred if fixed else QSizePolicy.Expanding,
+                QSizePolicy.Fixed)
             if danger:
                 btn.setObjectName("danger")
             btn.clicked.connect(slot)
-            bar.addWidget(btn)
             return btn
 
-        bar_btn("Refresh", self.refresh)
-        bar_btn("View Scan", self._view_scan)
-        bar_btn("Toggle Active", self._toggle_active)
-        bar_btn("Delete", self._delete_contract, danger=True)
+        def sep():
+            f = QFrame()
+            f.setFrameShape(QFrame.VLine)
+            f.setFrameShadow(QFrame.Plain)
+            return f
 
-        layout.addWidget(bottom)
+        self._wide_bar = QWidget()
+        self._wide_bar.setObjectName("bottom_bar")
+        wide = QHBoxLayout(self._wide_bar)
+        wide.setContentsMargins(8, 6, 8, 6)
+        wide.setSpacing(8)
+        wide.addWidget(mk("Delete", self._delete_contract, danger=True, fixed=True))
+        wide.addWidget(sep())
+        wide.addWidget(mk("View Scan", self._view_scan))
+        wide.addWidget(mk("Toggle Active", self._toggle_active))
+
+        self._narrow_bar = QWidget()
+        self._narrow_bar.setObjectName("bottom_bar")
+        narrow = QVBoxLayout(self._narrow_bar)
+        narrow.setContentsMargins(8, 4, 8, 4)
+        narrow.setSpacing(4)
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(mk("Delete", self._delete_contract, danger=True))
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        row2.addWidget(mk("View Scan", self._view_scan))
+        row2.addWidget(mk("Toggle Active", self._toggle_active))
+        narrow.addLayout(row1)
+        narrow.addLayout(row2)
+        self._narrow_bar.hide()
+
+        layout.addWidget(self._wide_bar)
+        layout.addWidget(self._narrow_bar)
 
     # ── Add form ──────────────────────────────────────────────────────────────
 
@@ -195,6 +217,12 @@ class ContractsTab(QWidget):
             self.refresh()
         except Exception as e:
             self.add_status.setText(f"Error: {e}")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        narrow = event.size().width() < 500
+        self._wide_bar.setVisible(not narrow)
+        self._narrow_bar.setVisible(narrow)
 
     # ── Data ──────────────────────────────────────────────────────────────────
 

@@ -3,7 +3,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QFileDialog,
+    QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QFileDialog, QFrame,
 )
 
 import database as db
@@ -121,7 +121,7 @@ class StudentsPage(QWidget):
         import_btn.setMinimumHeight(32)
         import_btn.setToolTip(
             "Expected columns: Name, Student ID, Grade\n"
-            "Supports .csv, .tsv, .xlsx, .xls, .ods"
+            "Supports .csv, .tsv, .xlsx, .xls"
         )
         import_btn.clicked.connect(self._import_spreadsheet)
         toolbar.addWidget(import_btn)
@@ -131,6 +131,18 @@ class StudentsPage(QWidget):
         add_btn.setMinimumHeight(32)
         add_btn.clicked.connect(self._add_student)
         toolbar.addWidget(add_btn)
+
+        help_btn = QPushButton("?")
+        help_btn.setMinimumHeight(32)
+        help_btn.setFixedWidth(32)
+        help_btn.setFocusPolicy(Qt.NoFocus)
+        help_btn.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
+        help_btn.clicked.connect(lambda: QMessageBox.information(
+            self, "Tips",
+            "Double-click a row to view a student's full instrument history.\n\n"
+            "Ctrl+click or Shift+click to select multiple rows for bulk delete."
+        ))
+        toolbar.addWidget(help_btn)
 
         layout.addLayout(toolbar)
 
@@ -158,41 +170,64 @@ class StudentsPage(QWidget):
         self._hovered_link_cell = None
         layout.addWidget(self.table)
 
-        # Hint + row count
-        hint = QLabel("Tip: Double-click a row to view a student's full instrument history. Ctrl+click or Shift+click to select multiple for bulk delete.")
-        hint.setStyleSheet("color: #5a7aaa; padding: 2px 0;")
-        layout.addWidget(hint)
-
         self.row_count_label = QLabel("")
         self.row_count_label.setObjectName("status")
         layout.addWidget(self.row_count_label)
 
-        # Bottom action bar
-        bottom = QWidget()
-        bottom.setObjectName("bottom_bar")
-        bar = QHBoxLayout(bottom)
-        bar.setContentsMargins(8, 6, 8, 6)
-        bar.setSpacing(8)
-
-        def bar_btn(text, slot, danger=False):
+        # Bottom action bar — adaptive (single row wide, two rows narrow)
+        def mk(text, slot, danger=False, fixed=False):
             btn = QPushButton(text)
             btn.setMinimumHeight(34)
-            btn.setMinimumWidth(60)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setSizePolicy(
+                QSizePolicy.Preferred if fixed else QSizePolicy.Expanding,
+                QSizePolicy.Fixed)
             if danger:
                 btn.setObjectName("danger")
             btn.clicked.connect(slot)
-            bar.addWidget(btn)
             return btn
 
-        bar_btn("Refresh", self.refresh)
-        bar_btn("Edit Student", self._edit_student)
-        bar_btn("History", self._view_history)
-        bar_btn("Delete", self._delete_student, danger=True)
+        def sep():
+            f = QFrame()
+            f.setFrameShape(QFrame.VLine)
+            f.setFrameShadow(QFrame.Plain)
+            return f
 
-        layout.addWidget(bottom)
+        self._wide_bar = QWidget()
+        self._wide_bar.setObjectName("bottom_bar")
+        wide = QHBoxLayout(self._wide_bar)
+        wide.setContentsMargins(8, 6, 8, 6)
+        wide.setSpacing(8)
+        wide.addWidget(mk("Edit", self._edit_student, fixed=True))
+        wide.addWidget(mk("Delete", self._delete_student, danger=True, fixed=True))
+        wide.addWidget(sep())
+        wide.addWidget(mk("History", self._view_history))
+
+        self._narrow_bar = QWidget()
+        self._narrow_bar.setObjectName("bottom_bar")
+        narrow = QVBoxLayout(self._narrow_bar)
+        narrow.setContentsMargins(8, 4, 8, 4)
+        narrow.setSpacing(4)
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        row1.addWidget(mk("Edit", self._edit_student))
+        row1.addWidget(mk("Delete", self._delete_student, danger=True))
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        row2.addWidget(mk("History", self._view_history))
+        narrow.addLayout(row1)
+        narrow.addLayout(row2)
+        self._narrow_bar.hide()
+
+        layout.addWidget(self._wide_bar)
+        layout.addWidget(self._narrow_bar)
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        narrow = event.size().width() < 500
+        self._wide_bar.setVisible(not narrow)
+        self._narrow_bar.setVisible(narrow)
 
     def keyPressEvent(self, event):
         if self.table.hasFocus():
@@ -363,7 +398,7 @@ class StudentsPage(QWidget):
     def _import_spreadsheet(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Select File", "",
-            "Spreadsheets & CSV (*.csv *.tsv *.xlsx *.xls *.ods);;All Files (*)"
+            "Spreadsheets & CSV (*.csv *.tsv *.xlsx *.xls);;All Files (*)"
         )
         if not path:
             return

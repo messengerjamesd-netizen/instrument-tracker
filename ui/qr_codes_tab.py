@@ -2,7 +2,7 @@ import io
 import os
 import tempfile
 
-from PySide6.QtCore import Qt, Signal, QRect
+from PySide6.QtCore import Qt, Signal, QRect, QTimer
 from PySide6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -597,6 +597,12 @@ class QRCodesTab(QWidget):
         self.status_label.setObjectName("status")
         self.status_label.setVisible(False)
         h.addWidget(self.status_label)
+
+        self._open_file_btn = QPushButton("Open File")
+        self._open_file_btn.setVisible(False)
+        self._open_file_btn.clicked.connect(self._open_saved_pdf)
+        h.addWidget(self._open_file_btn)
+
         h.addStretch()
         return group
 
@@ -688,15 +694,25 @@ class QRCodesTab(QWidget):
             return
         try:
             if self._generate(path):
-                self.status_label.setText("Saved.")
+                self._saved_pdf_path = path
+                self.status_label.setText("PDF saved.")
                 self.status_label.setVisible(True)
-                QMessageBox.information(self, "Done", f"PDF saved:\n{path}")
+                self._open_file_btn.setVisible(True)
+                QTimer.singleShot(8000, self._clear_save_status)
         except ImportError as e:
             QMessageBox.critical(self, "Missing Library",
                                  f"Required library not installed:\n{e}\n\n"
                                  "Run: pip install qrcode[pil] reportlab")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to generate PDF:\n{e}")
+
+    def _clear_save_status(self):
+        self.status_label.setVisible(False)
+        self._open_file_btn.setVisible(False)
+
+    def _open_saved_pdf(self):
+        if hasattr(self, "_saved_pdf_path") and self._saved_pdf_path:
+            os.startfile(self._saved_pdf_path)
 
     # ── Standard grid ─────────────────────────────────────────────────────────
 
