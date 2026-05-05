@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import tempfile
 
@@ -7,22 +8,177 @@ from PySide6.QtGui import QPixmap, QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFileDialog, QMessageBox, QCheckBox, QScrollArea,
-    QFrame, QComboBox, QColorDialog,
+    QFrame, QComboBox, QColorDialog, QDialog, QDialogButtonBox,
+    QLineEdit, QListWidget, QListWidgetItem,
 )
 
 import database as db
 
-# Avery 22816: 2"x2" square, 3 cols x 4 rows = 12 per sheet on US Letter
-_AVERY_22816 = {
-    "cols": 3,
-    "rows": 4,
-    "label_w": 2.0,
-    "label_h": 2.0,
-    "left_margin": 0.625,
-    "top_margin": 0.600,
-    "col_gap": 0.625,
-    "row_gap": 0.600,
-}
+# ── Built-in label format database ───────────────────────────────────────────
+# All measurements in inches for US Letter (8.5" × 11") paper.
+# Layout math: left_margin + cols*label_w + (cols-1)*col_gap + right_margin = 8.5
+#              top_margin  + rows*label_h + (rows-1)*row_gap + bot_margin   = 11.0
+
+_BUILTIN_FORMATS = [
+    # ── Square / inventory stickers ───────────────────────────────────────────
+    {"name": "Avery 22816",
+     "description": "Square stickers  •  2\" × 2\"  •  12/sheet  •  great for QR codes on cases",
+     "cols": 3,  "rows": 4,  "label_w": 2.0,     "label_h": 2.0,
+     "left_margin": 0.625,   "top_margin": 0.600,  "col_gap": 0.625,  "row_gap": 0.600},
+
+    {"name": "1.5\" × 1.5\" Square",
+     "description": "Small square  •  1½\" × 1½\"  •  30/sheet  •  common on Amazon for QR code inventory labels",
+     "cols": 5,  "rows": 6,  "label_w": 1.5,     "label_h": 1.5,
+     "left_margin": 0.5,     "top_margin": 1.0,    "col_gap": 0.0,    "row_gap": 0.0},
+
+    {"name": "1\" × 1\" Square",
+     "description": "Mini square  •  1\" × 1\"  •  80/sheet  •  barcodes and small QR codes; sold by many brands at Walmart/Amazon",
+     "cols": 8,  "rows": 10, "label_w": 1.0,     "label_h": 1.0,
+     "left_margin": 0.25,    "top_margin": 0.5,    "col_gap": 0.0,    "row_gap": 0.0},
+
+    # ── Address / mailing labels ──────────────────────────────────────────────
+    # Avery 5160 / 5260 / 5960 / 8160 / 8460 all share this layout.
+    # Also sold as: Maco ML-1000, SJPACK, Printworks, Amazon Basics, Staples, Office Depot,
+    # Great Value (Walmart), Uline S-19402 — virtually every generic address label.
+    {"name": "Avery 5160",
+     "description": "Address  •  2⅝\" × 1\"  •  30/sheet  •  most widely used label size; compatible with 5260, 8160, Maco ML-1000, SJPACK, Amazon Basics, Great Value",
+     "cols": 3,  "rows": 10, "label_w": 2.625,   "label_h": 1.0,
+     "left_margin": 0.1875,  "top_margin": 0.5,   "col_gap": 0.125,  "row_gap": 0.0},
+
+    {"name": "Avery 5260",
+     "description": "Address EasyPeel  •  2⅝\" × 1\"  •  30/sheet  •  same layout as 5160",
+     "cols": 3,  "rows": 10, "label_w": 2.625,   "label_h": 1.0,
+     "left_margin": 0.1875,  "top_margin": 0.5,   "col_gap": 0.125,  "row_gap": 0.0},
+
+    {"name": "Avery 8160",
+     "description": "Address inkjet  •  2⅝\" × 1\"  •  30/sheet  •  same layout as 5160",
+     "cols": 3,  "rows": 10, "label_w": 2.625,   "label_h": 1.0,
+     "left_margin": 0.1875,  "top_margin": 0.5,   "col_gap": 0.125,  "row_gap": 0.0},
+
+    {"name": "Avery 5161",
+     "description": "Address  •  4\" × 1\"  •  20/sheet",
+     "cols": 2,  "rows": 10, "label_w": 4.0,     "label_h": 1.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 8161",
+     "description": "Address inkjet  •  4\" × 1\"  •  20/sheet  •  same layout as 5161",
+     "cols": 2,  "rows": 10, "label_w": 4.0,     "label_h": 1.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 5162",
+     "description": "Address  •  4\" × 1⅓\"  •  14/sheet",
+     "cols": 2,  "rows": 7,  "label_w": 4.0,     "label_h": 1.333,
+     "left_margin": 0.15625, "top_margin": 0.833, "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 8162",
+     "description": "Address inkjet  •  4\" × 1⅓\"  •  14/sheet  •  same layout as 5162",
+     "cols": 2,  "rows": 7,  "label_w": 4.0,     "label_h": 1.333,
+     "left_margin": 0.15625, "top_margin": 0.833, "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 5195",
+     "description": "Small / inventory  •  2½\" × ¾\"  •  39/sheet  •  good for narrow barcodes on small items",
+     "cols": 3,  "rows": 13, "label_w": 2.5,     "label_h": 0.75,
+     "left_margin": 0.25,    "top_margin": 0.625, "col_gap": 0.25,   "row_gap": 0.0},
+
+    # ── Shipping labels ───────────────────────────────────────────────────────
+    # Avery 5163 / 8163 / 5912 / 8912 all share this layout.
+    # Also sold as: Maco ML-3000, Amazon Basics Shipping, Staples, Office Depot,
+    # Great Value shipping, Uline S-12516, AIEX, Betckey, Yaroze.
+    {"name": "Avery 5163",
+     "description": "Shipping  •  4\" × 2\"  •  10/sheet  •  compatible with 8163, 5912, Maco ML-3000, Amazon Basics, most generic shipping labels",
+     "cols": 2,  "rows": 5,  "label_w": 4.0,     "label_h": 2.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 8163",
+     "description": "Shipping inkjet  •  4\" × 2\"  •  10/sheet  •  same layout as 5163",
+     "cols": 2,  "rows": 5,  "label_w": 4.0,     "label_h": 2.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Avery 5164",
+     "description": "Large shipping  •  4\" × 3⅓\"  •  6/sheet  •  compatible with Uline S-11965, WorldLabel WL-875",
+     "cols": 2,  "rows": 3,  "label_w": 4.0,     "label_h": 3.333,
+     "left_margin": 0.25,    "top_margin": 0.5,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    {"name": "Half Sheet Shipping Labels",
+     "description": "Large shipping / packing slip  •  5½\" × 8½\"  •  2/sheet  •  best seller on Amazon; works in all inkjet & laser printers; sold by MFLABEL, Envelopes.com, and dozens of others",
+     "cols": 1,  "rows": 2,  "label_w": 8.5,     "label_h": 5.5,
+     "left_margin": 0.0,     "top_margin": 0.0,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    {"name": "Quarter Sheet Labels",
+     "description": "Medium shipping / product  •  4¼\" × 5½\"  •  4/sheet  •  common on Amazon and at Walmart",
+     "cols": 2,  "rows": 2,  "label_w": 4.25,    "label_h": 5.5,
+     "left_margin": 0.0,     "top_margin": 0.0,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    {"name": "Full Sheet Label",
+     "description": "Single full-page label  •  8½\" × 11\"  •  1/sheet  •  poster, single large QR code, or packing list",
+     "cols": 1,  "rows": 1,  "label_w": 8.5,     "label_h": 11.0,
+     "left_margin": 0.0,     "top_margin": 0.0,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    # ── Return address labels ─────────────────────────────────────────────────
+    {"name": "Avery 5167",
+     "description": "Return address  •  1¾\" × ½\"  •  80/sheet  •  also sold as Avery 8167",
+     "cols": 4,  "rows": 20, "label_w": 1.75,    "label_h": 0.5,
+     "left_margin": 0.28125, "top_margin": 0.5,   "col_gap": 0.3125, "row_gap": 0.0},
+
+    {"name": "Avery 8167",
+     "description": "Return address inkjet  •  1¾\" × ½\"  •  80/sheet  •  same layout as 5167",
+     "cols": 4,  "rows": 20, "label_w": 1.75,    "label_h": 0.5,
+     "left_margin": 0.28125, "top_margin": 0.5,   "col_gap": 0.3125, "row_gap": 0.0},
+
+    # ── Business cards ────────────────────────────────────────────────────────
+    {"name": "Avery 5371",
+     "description": "Business cards  •  3½\" × 2\"  •  10/sheet  •  also 5376, 5877, 8371, 8376; sold by Staples, Office Depot, Amazon Basics",
+     "cols": 2,  "rows": 5,  "label_w": 3.5,     "label_h": 2.0,
+     "left_margin": 0.75,    "top_margin": 0.5,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    {"name": "Avery 5376",
+     "description": "Business cards Clean Edge  •  3½\" × 2\"  •  10/sheet  •  same layout as 5371",
+     "cols": 2,  "rows": 5,  "label_w": 3.5,     "label_h": 2.0,
+     "left_margin": 0.75,    "top_margin": 0.5,   "col_gap": 0.0,    "row_gap": 0.0},
+
+    # ── File folder labels ────────────────────────────────────────────────────
+    {"name": "Avery 5366",
+     "description": "File folder  •  3⁷⁄₁₆\" × ⅔\"  •  30/sheet",
+     "cols": 2,  "rows": 15, "label_w": 3.4375,  "label_h": 0.667,
+     "left_margin": 0.5,     "top_margin": 0.5,   "col_gap": 0.625,  "row_gap": 0.0},
+
+    # ── Other brands / generic equivalents ────────────────────────────────────
+    {"name": "Maco ML-1000",
+     "description": "Address (Maco / Walmart)  •  2⅝\" × 1\"  •  30/sheet  •  same layout as Avery 5160; widely available at Walmart",
+     "cols": 3,  "rows": 10, "label_w": 2.625,   "label_h": 1.0,
+     "left_margin": 0.1875,  "top_margin": 0.5,   "col_gap": 0.125,  "row_gap": 0.0},
+
+    {"name": "Maco ML-3000",
+     "description": "Shipping (Maco / Walmart)  •  4\" × 2\"  •  10/sheet  •  same layout as Avery 5163; widely available at Walmart",
+     "cols": 2,  "rows": 5,  "label_w": 4.0,     "label_h": 2.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "Uline S-19402",
+     "description": "Address (Uline)  •  2⅝\" × 1\"  •  30/sheet  •  same layout as Avery 5160",
+     "cols": 3,  "rows": 10, "label_w": 2.625,   "label_h": 1.0,
+     "left_margin": 0.1875,  "top_margin": 0.5,   "col_gap": 0.125,  "row_gap": 0.0},
+
+    {"name": "Uline S-12516",
+     "description": "Shipping (Uline)  •  4\" × 2\"  •  10/sheet  •  same layout as Avery 5163",
+     "cols": 2,  "rows": 5,  "label_w": 4.0,     "label_h": 2.0,
+     "left_margin": 0.15625, "top_margin": 0.5,   "col_gap": 0.1875, "row_gap": 0.0},
+
+    {"name": "3\" × 1\" Barcode Labels",
+     "description": "Barcode / inventory  •  3\" × 1\"  •  20/sheet  •  good for narrow barcodes; sold by various brands on Amazon",
+     "cols": 2,  "rows": 10, "label_w": 3.0,     "label_h": 1.0,
+     "left_margin": 1.0,     "top_margin": 0.5,   "col_gap": 0.5,    "row_gap": 0.0},
+
+    {"name": "WorldLabel WL-875",
+     "description": "Large label (WorldLabel / OnlineLabels)  •  4\" × 3⅓\"  •  6/sheet  •  same layout as Avery 5164",
+     "cols": 2,  "rows": 3,  "label_w": 4.0,     "label_h": 3.333,
+     "left_margin": 0.25,    "top_margin": 0.5,   "col_gap": 0.0,    "row_gap": 0.0},
+]
+
+
+def _get_user_formats_path():
+    import database as db
+    return os.path.join(os.path.dirname(db.get_db_path()), "label_formats.json")
+
 
 _SIZE_INCHES = [0.75, 1.0, 1.25, 1.5, 2.0, 2.5]
 _SIZE_LABELS = ['¾"', '1"', '1¼"', '1½"', '2"', '2½"']
@@ -56,6 +212,93 @@ _CODE128B_SYM = [
     "10111101110","11101011110","11110101110",
     "11010000100","11010010000","11010011100","1100011101011",
 ]
+
+
+class AddLabelFormatDialog(QDialog):
+    """Search the built-in label format database and pick one to add."""
+
+    def __init__(self, already_added: set, parent=None):
+        super().__init__(parent)
+        self.selected_format = None
+        self.setWindowTitle("Add Label Format")
+        self.setMinimumSize(500, 400)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel("Search by name or number (e.g. \"5160\", \"address\", \"shipping\"):"))
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Start typing to filter…")
+        self._search.textChanged.connect(self._filter)
+        layout.addWidget(self._search)
+
+        self._list = QListWidget()
+        self._list.currentItemChanged.connect(self._on_item_changed)
+        self._list.itemDoubleClicked.connect(self._on_double_click)
+        layout.addWidget(self._list, 1)
+
+        self._detail = QLabel("")
+        self._detail.setStyleSheet("color: #5a7aaa; font-size: 11px;")
+        self._detail.setWordWrap(True)
+        layout.addWidget(self._detail)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self._ok_btn = btns.button(QDialogButtonBox.Ok)
+        self._ok_btn.setEnabled(False)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._already_added = already_added
+        self._filter("")
+        self._search.setFocus()
+
+    def _filter(self, text):
+        self._list.clear()
+        q = text.lower()
+        for fmt in _BUILTIN_FORMATS:
+            if q and q not in fmt["name"].lower() and q not in fmt["description"].lower():
+                continue
+            item = QListWidgetItem(f"{fmt['name']}  —  {fmt['description']}")
+            item.setData(Qt.UserRole, fmt)
+            if fmt["name"] in self._already_added:
+                item.setForeground(QColor("#666688"))
+                item.setText(item.text() + "  ✓ already added")
+            self._list.addItem(item)
+        self._ok_btn.setEnabled(False)
+        self._detail.setText("")
+
+    def _on_item_changed(self, item):
+        if item is None:
+            self._detail.setText("")
+            self._ok_btn.setEnabled(False)
+            return
+        fmt = item.data(Qt.UserRole)
+        already = fmt["name"] in self._already_added
+        s = fmt
+        self._detail.setText(
+            f"Cols: {s['cols']}  •  Rows: {s['rows']}  •  "
+            f"Label size: {s['label_w']}\" × {s['label_h']}\"  •  "
+            f"Left margin: {s['left_margin']}\"  •  Top margin: {s['top_margin']}\"  •  "
+            f"Col gap: {s['col_gap']}\"  •  Row gap: {s['row_gap']}\""
+        )
+        self._ok_btn.setEnabled(not already)
+
+    def _on_double_click(self, item):
+        fmt = item.data(Qt.UserRole)
+        if fmt["name"] not in self._already_added:
+            self._on_accept()
+
+    def _on_accept(self):
+        item = self._list.currentItem()
+        if item is None:
+            return
+        fmt = item.data(Qt.UserRole)
+        if fmt["name"] in self._already_added:
+            return
+        self.selected_format = fmt
+        self.accept()
 
 
 class _PillToggle(QWidget):
@@ -116,6 +359,10 @@ class QRCodesTab(QWidget):
         self._checkboxes = []
         self._qr_color = "#000000"
         self._preview_mode = "single"
+        # _format_specs[i] corresponds to format_combo index i+1 (index 0 = standard grid)
+        self._format_specs = []
+        self._format_names_added = set()
+        self._load_user_formats()
         self._build_ui()
 
     def _build_ui(self):
@@ -145,11 +392,24 @@ class QRCodesTab(QWidget):
 
         h.addWidget(QLabel("Format:"))
         self.format_combo = QComboBox()
-        self.format_combo.addItems([
-            "Standard grid",
-            "Avery 22816  (2″×2″ stickers, 12/sheet)",
-        ])
+        self.format_combo.addItem("Standard grid")
+        for spec in self._format_specs:
+            self.format_combo.addItem(self._format_combo_label(spec))
         h.addWidget(self.format_combo)
+        add_fmt_btn = QPushButton("+")
+        add_fmt_btn.setFixedSize(26, 26)
+        add_fmt_btn.setToolTip("Add label format…")
+        add_fmt_btn.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
+        add_fmt_btn.clicked.connect(self._add_label_format)
+        h.addWidget(add_fmt_btn)
+        self._remove_fmt_btn = QPushButton("−")
+        self._remove_fmt_btn.setFixedSize(26, 26)
+        self._remove_fmt_btn.setToolTip("Remove this format from list")
+        self._remove_fmt_btn.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
+        self._remove_fmt_btn.setVisible(False)
+        self._remove_fmt_btn.clicked.connect(self._remove_label_format)
+        h.addWidget(self._remove_fmt_btn)
+        self.format_combo.currentIndexChanged.connect(self._update_remove_btn)
 
         h.addSpacing(20)
         self.type_label = QLabel("Code type:")
@@ -198,14 +458,14 @@ class QRCodesTab(QWidget):
         self._update_preview()
 
     def _update_option_visibility(self):
-        avery = self.format_combo.currentIndex() == 1
-        is_qr = avery or self.type_combo.currentIndex() == 0
-        self.type_label.setVisible(not avery)
-        self.type_combo.setVisible(not avery)
-        self.size_label.setVisible(not avery)
-        self.size_combo.setVisible(not avery)
-        self.style_label.setVisible(not avery and is_qr)
-        self.style_combo.setVisible(not avery and is_qr)
+        is_label_sheet = self._get_label_format_spec() is not None
+        is_qr = is_label_sheet or self.type_combo.currentIndex() == 0
+        self.type_label.setVisible(not is_label_sheet)
+        self.type_combo.setVisible(not is_label_sheet)
+        self.size_label.setVisible(not is_label_sheet)
+        self.size_combo.setVisible(not is_label_sheet)
+        self.style_label.setVisible(is_qr)
+        self.style_combo.setVisible(is_qr)
         self.color_label.setVisible(True)
         self.color_btn.setVisible(True)
         self.size_label.setText("QR code size:" if is_qr else "Bar height:")
@@ -311,15 +571,19 @@ class QRCodesTab(QWidget):
             return
 
         try:
-            avery = self.format_combo.currentIndex() == 1
-            is_barcode = not avery and self.type_combo.currentIndex() == 1
+            spec = self._get_label_format_spec()
+            is_label_sheet = spec is not None
+            is_barcode = not is_label_sheet and self.type_combo.currentIndex() == 1
             if is_barcode:
                 pixmap = self._render_barcode_preview(serial, self._qr_color)
                 info = f"Code 128\nS/N: {serial}"
             else:
                 style_idx = self.style_combo.currentIndex()
                 pixmap = self._render_qr_preview(serial, style_idx, self._qr_color)
-                size_str = '2"' if avery else _SIZE_LABELS[self.size_combo.currentIndex()]
+                if is_label_sheet:
+                    size_str = f'{spec["label_w"]}"×{spec["label_h"]}"'
+                else:
+                    size_str = _SIZE_LABELS[self.size_combo.currentIndex()]
                 info = f"{_QR_STYLES[style_idx]} · {size_str}\nS/N: {serial}"
 
             self._preview_img.setText("")
@@ -484,7 +748,8 @@ class QRCodesTab(QWidget):
             fill="white", outline="#8090a8", width=1,
         )
 
-        avery    = self.format_combo.currentIndex() == 1
+        spec     = self._get_label_format_spec()
+        avery    = spec is not None
         is_bcode = not avery and self.type_combo.currentIndex() == 1
 
         def pt2px(v):
@@ -523,14 +788,14 @@ class QRCodesTab(QWidget):
                 pass
 
         if avery:
-            s       = _AVERY_22816
+            s       = spec
             lw      = s["label_w"] * 72
             lh      = s["label_h"] * 72
             left_m  = s["left_margin"] * 72
             top_m   = s["top_margin"] * 72
             col_gap = s["col_gap"] * 72
             row_gap = s["row_gap"] * 72
-            text_h  = 0.45 * 72
+            text_h  = min(0.45 * 72, lh * 0.4)
             total   = s["cols"] * s["rows"]
             for i, instr in enumerate(selected[:total]):
                 col  = i % s["cols"]
@@ -660,8 +925,9 @@ class QRCodesTab(QWidget):
             QMessageBox.warning(self, "No Selection",
                                 "No instruments with serial numbers are selected.")
             return False
-        if self.format_combo.currentIndex() == 1:
-            self._generate_avery_22816(path, selected)
+        spec = self._get_label_format_spec()
+        if spec is not None:
+            self._generate_label_sheet(path, selected, spec)
         else:
             self._generate_grid_pdf(path, selected)
         return True
@@ -770,15 +1036,15 @@ class QRCodesTab(QWidget):
 
         c.save()
 
-    # ── Avery 22816 ───────────────────────────────────────────────────────────
+    # ── Label sheet (any format) ──────────────────────────────────────────────
 
-    def _generate_avery_22816(self, path, instruments):
+    def _generate_label_sheet(self, path, instruments, spec):
         from reportlab.lib.pagesizes import letter
         from reportlab.lib.units import inch
         from reportlab.lib import colors
         from reportlab.pdfgen import canvas as rl_canvas
 
-        s = _AVERY_22816
+        s = spec
         page_w, page_h = letter
         label_w = s["label_w"] * inch
         label_h = s["label_h"] * inch
@@ -792,19 +1058,22 @@ class QRCodesTab(QWidget):
         y_starts = [page_h - top_m - (r + 1) * label_h - r * row_gap
                     for r in range(s["rows"])]
 
-        text_h  = 0.45 * inch
-        qr_size = label_w - 0.15 * inch
+        text_h  = min(0.45 * inch, label_h * 0.4)
+        qr_avail = label_h - text_h - 0.08 * inch
+        qr_size  = min(label_w - 0.15 * inch, qr_avail)
+        qr_size  = max(0.15 * inch, qr_size)
 
         c = rl_canvas.Canvas(path, pagesize=letter)
         pos = 0
+        labels_per_page = cols * s["rows"]
 
         for instr in instruments:
             serial = self._serial_for(instr)
             if not serial:
                 continue
-            if pos > 0 and pos % (cols * s["rows"]) == 0:
+            if pos > 0 and pos % labels_per_page == 0:
                 c.showPage()
-            slot = pos % (cols * s["rows"])
+            slot = pos % labels_per_page
             x = x_starts[slot % cols]
             y = y_starts[slot // cols]
 
@@ -815,11 +1084,71 @@ class QRCodesTab(QWidget):
             c.setDash()
 
             self._draw_qr_cell(c, instr, serial, x, y, label_w,
-                               qr_size, text_h, inch, style_idx=0,
+                               qr_size, text_h, inch,
+                               style_idx=self.style_combo.currentIndex(),
                                color=self._qr_color)
             pos += 1
 
         c.save()
+
+    # ── Format management ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _format_combo_label(spec):
+        total = spec["cols"] * spec["rows"]
+        return f"{spec['name']}  ({spec['label_w']}\"×{spec['label_h']}\", {total}/sheet)"
+
+    def _get_label_format_spec(self):
+        idx = self.format_combo.currentIndex()
+        if idx == 0:
+            return None
+        return self._format_specs[idx - 1]
+
+    def _load_user_formats(self):
+        try:
+            path = _get_user_formats_path()
+            if not os.path.exists(path):
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                user_formats = json.load(f)
+            for fmt in user_formats:
+                if fmt.get("name") not in self._format_names_added:
+                    self._format_specs.append(fmt)
+                    self._format_names_added.add(fmt["name"])
+        except Exception:
+            pass
+
+    def _save_user_formats(self):
+        try:
+            user_formats = list(self._format_specs)
+            with open(_get_user_formats_path(), "w", encoding="utf-8") as f:
+                json.dump(user_formats, f, indent=2)
+        except Exception:
+            pass
+
+    def _add_label_format(self):
+        dlg = AddLabelFormatDialog(self._format_names_added, self)
+        if dlg.exec() != QDialog.Accepted or dlg.selected_format is None:
+            return
+        fmt = dlg.selected_format
+        self._format_specs.append(fmt)
+        self._format_names_added.add(fmt["name"])
+        self.format_combo.addItem(self._format_combo_label(fmt))
+        self.format_combo.setCurrentIndex(self.format_combo.count() - 1)
+        self._save_user_formats()
+
+    def _update_remove_btn(self):
+        self._remove_fmt_btn.setVisible(self.format_combo.currentIndex() > 0)
+
+    def _remove_label_format(self):
+        idx = self.format_combo.currentIndex()
+        if idx <= 0:
+            return
+        fmt = self._format_specs[idx - 1]
+        self._format_specs.pop(idx - 1)
+        self._format_names_added.discard(fmt["name"])
+        self.format_combo.removeItem(idx)
+        self._save_user_formats()
 
     # ── Cell drawing ──────────────────────────────────────────────────────────
 

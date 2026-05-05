@@ -149,6 +149,7 @@ class EditInstrumentDialog(QDialog):
 class ChangeStatusDialog(QDialog):
     def __init__(self, instrument, parent=None):
         super().__init__(parent)
+        self.add_student_requested = False
         self.setWindowTitle("Change Instrument Status")
         self.setMinimumWidth(360)
 
@@ -166,6 +167,7 @@ class ChangeStatusDialog(QDialog):
         idx = self.status_combo.findText(current)
         if idx >= 0:
             self.status_combo.setCurrentIndex(idx)
+            self.status_combo.model().item(idx).setEnabled(False)
         self.status_combo.currentTextChanged.connect(self._on_status_changed)
         layout.addRow("Status:", self.status_combo)
 
@@ -175,7 +177,12 @@ class ChangeStatusDialog(QDialog):
         self.repair_notes.setFixedHeight(80)
         layout.addRow(self.repair_label, self.repair_notes)
 
-        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns = QDialogButtonBox()
+        if instrument["status"] == "Checked Out":
+            add_btn = btns.addButton("Add Another Student…", QDialogButtonBox.ActionRole)
+            add_btn.clicked.connect(self._on_add_student)
+        btns.addButton(QDialogButtonBox.Ok)
+        btns.addButton(QDialogButtonBox.Cancel)
         btns.accepted.connect(self._on_accept)
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
@@ -186,6 +193,10 @@ class ChangeStatusDialog(QDialog):
         visible = status in REPAIR_STATUSES
         self.repair_label.setVisible(visible)
         self.repair_notes.setVisible(visible)
+
+    def _on_add_student(self):
+        self.add_student_requested = True
+        self.accept()
 
     def _on_accept(self):
         if self.status_combo.currentText() in REPAIR_STATUSES:
@@ -482,68 +493,125 @@ class InstrumentsPage(QWidget):
         layout.setContentsMargins(16, 16, 16, 8)
         layout.setSpacing(10)
 
-        # Toolbar
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(8)
-
-        toolbar.addWidget(QLabel("Status:"))
+        # ── Canonical filter widgets (always drive _apply_filter) ────────────────
         self.status_filter = QComboBox()
         self.status_filter.addItem("All Statuses", "")
         for s in STATUSES:
             self.status_filter.addItem(s, s)
         self.status_filter.currentIndexChanged.connect(self._apply_filter)
-        toolbar.addWidget(self.status_filter)
 
-        toolbar.addSpacing(8)
-        toolbar.addWidget(QLabel("Search:"))
         self.search_box = QLineEdit()
         self.search_box.setObjectName("search")
         self.search_box.setPlaceholderText("Filter by name, model, serial, student…")
         self.search_box.setMinimumWidth(80)
         self.search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_box.textChanged.connect(lambda _: self._apply_filter())
-        toolbar.addWidget(self.search_box)
 
         self.invoice_filter_cb = QCheckBox("Has Repair Invoice")
         self.invoice_filter_cb.stateChanged.connect(lambda _: self._apply_filter())
-        toolbar.addSpacing(8)
-        toolbar.addWidget(self.invoice_filter_cb)
 
-        toolbar.addSpacing(12)
-        import_btn = QPushButton("Import Spreadsheet")
-        import_btn.setMinimumHeight(32)
-        import_btn.setToolTip(
-            "Expected columns: Name, Model, Serial Number\n"
-            "Supports .csv, .tsv, .xlsx, .xls"
-        )
-        import_btn.clicked.connect(self._import_spreadsheet)
-        toolbar.addWidget(import_btn)
+        # Narrow-bar mirror widgets (synced bidirectionally; no infinite loops
+        # because Qt only emits these signals when the value actually changes)
+        _status_n = QComboBox()
+        _status_n.addItem("All Statuses", "")
+        for s in STATUSES:
+            _status_n.addItem(s, s)
+        _search_n = QLineEdit()
+        _search_n.setObjectName("search")
+        _search_n.setPlaceholderText("Filter by name, model, serial, student…")
+        _search_n.setMinimumWidth(80)
+        _search_n.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        _invoice_n = QCheckBox("Has Repair Invoice")
 
-        bulk_btn = QPushButton("Bulk Change Status")
-        bulk_btn.setMinimumHeight(32)
-        bulk_btn.clicked.connect(self._bulk_change_status)
-        toolbar.addWidget(bulk_btn)
+        self.status_filter.currentIndexChanged.connect(_status_n.setCurrentIndex)
+        _status_n.currentIndexChanged.connect(self.status_filter.setCurrentIndex)
+        self.search_box.textChanged.connect(_search_n.setText)
+        _search_n.textChanged.connect(self.search_box.setText)
+        self.invoice_filter_cb.stateChanged.connect(_invoice_n.setCheckState)
+        _invoice_n.stateChanged.connect(self.invoice_filter_cb.setCheckState)
 
-        add_btn = QPushButton("+ Add Instrument")
-        add_btn.setObjectName("primary")
-        add_btn.setMinimumHeight(32)
-        add_btn.clicked.connect(self._add_instrument)
-        toolbar.addWidget(add_btn)
+        def _make_import_btn():
+            b = QPushButton("Import Spreadsheet")
+            b.setMinimumHeight(32)
+            b.setToolTip(
+                "Expected columns: Name, Model, Serial Number\n"
+                "Supports .csv, .tsv, .xlsx, .xls"
+            )
+            b.clicked.connect(self._import_spreadsheet)
+            return b
 
-        help_btn = QPushButton("?")
-        help_btn.setMinimumHeight(32)
-        help_btn.setFixedWidth(32)
-        help_btn.setFocusPolicy(Qt.NoFocus)
-        help_btn.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
-        help_btn.clicked.connect(lambda: QMessageBox.information(
-            self, "Tips",
+        def _make_bulk_btn():
+            b = QPushButton("Bulk Change Status")
+            b.setMinimumHeight(32)
+            b.clicked.connect(self._bulk_change_status)
+            return b
+
+        def _make_add_btn():
+            b = QPushButton("+ Add Instrument")
+            b.setObjectName("primary")
+            b.setMinimumHeight(32)
+            b.clicked.connect(self._add_instrument)
+            return b
+
+        _help_tip = (
             "Right-click the Status column to change an instrument's status.\n\n"
             "Double-click a row to view full history and contracts.\n\n"
             "Ctrl+click or Shift+click to select multiple rows for bulk actions."
-        ))
-        toolbar.addWidget(help_btn)
+        )
 
-        layout.addLayout(toolbar)
+        def _make_help_btn():
+            b = QPushButton("?")
+            b.setMinimumHeight(32)
+            b.setFixedWidth(32)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; padding: 0px; }")
+            b.clicked.connect(lambda: QMessageBox.information(self, "Tips", _help_tip))
+            return b
+
+        # Wide top bar — everything in one row
+        self._top_wide_bar = QWidget()
+        tw = QHBoxLayout(self._top_wide_bar)
+        tw.setContentsMargins(0, 0, 0, 0)
+        tw.setSpacing(8)
+        tw.addWidget(QLabel("Status:"))
+        tw.addWidget(self.status_filter)
+        tw.addSpacing(8)
+        tw.addWidget(QLabel("Search:"))
+        tw.addWidget(self.search_box)
+        tw.addSpacing(8)
+        tw.addWidget(self.invoice_filter_cb)
+        tw.addSpacing(12)
+        tw.addWidget(_make_import_btn())
+        tw.addWidget(_make_bulk_btn())
+        tw.addWidget(_make_add_btn())
+        tw.addWidget(_make_help_btn())
+
+        # Narrow top bar — filters row 1, buttons row 2 (mirror widgets for filters)
+        self._top_narrow_bar = QWidget()
+        tn = QVBoxLayout(self._top_narrow_bar)
+        tn.setContentsMargins(0, 0, 0, 0)
+        tn.setSpacing(4)
+        tn_row1 = QHBoxLayout()
+        tn_row1.setSpacing(8)
+        tn_row1.addWidget(QLabel("Status:"))
+        tn_row1.addWidget(_status_n)
+        tn_row1.addSpacing(8)
+        tn_row1.addWidget(QLabel("Search:"))
+        tn_row1.addWidget(_search_n)
+        tn_row2 = QHBoxLayout()
+        tn_row2.setSpacing(8)
+        tn_row2.addWidget(_invoice_n)
+        tn_row2.addStretch()
+        tn_row2.addWidget(_make_import_btn())
+        tn_row2.addWidget(_make_bulk_btn())
+        tn_row2.addWidget(_make_add_btn())
+        tn_row2.addWidget(_make_help_btn())
+        tn.addLayout(tn_row1)
+        tn.addLayout(tn_row2)
+        self._top_narrow_bar.hide()
+
+        layout.addWidget(self._top_wide_bar)
+        layout.addWidget(self._top_narrow_bar)
 
         # Table
         self.table = QTableWidget()
@@ -630,9 +698,13 @@ class InstrumentsPage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        narrow = event.size().width() < 500
-        self._wide_bar.setVisible(not narrow)
-        self._narrow_bar.setVisible(narrow)
+        w = event.size().width()
+        narrow_top = w < 700
+        self._top_wide_bar.setVisible(not narrow_top)
+        self._top_narrow_bar.setVisible(narrow_top)
+        narrow_bottom = w < 500
+        self._wide_bar.setVisible(not narrow_bottom)
+        self._narrow_bar.setVisible(narrow_bottom)
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -1216,6 +1288,14 @@ class InstrumentsPage(QWidget):
         dlg = ChangeStatusDialog(instr, self)
         if dlg.exec() != QDialog.Accepted:
             return
+
+        if dlg.add_student_requested:
+            if not self._do_checkout(instr, add_student=True):
+                return
+            self.refresh()
+            self.status_changed.emit()
+            return
+
         new_status = dlg.get_status()
 
         if new_status == "Checked Out":
