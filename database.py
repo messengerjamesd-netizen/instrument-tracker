@@ -126,7 +126,14 @@ def get_student_roster():
                 MIN(i.name) AS instrument_name,
                 MIN(i.model) AS model,
                 MIN(i.serial_number) AS serial_number,
-                COUNT(i.id) AS instrument_count
+                COUNT(i.id) AS instrument_count,
+                GROUP_CONCAT(
+                    CASE WHEN i.model IS NOT NULL AND i.model != ''
+                         THEN i.name || ' (' || i.model || ')'
+                         ELSE i.name END,
+                    ', '
+                ) AS all_instrument_names,
+                GROUP_CONCAT(CAST(i.id AS TEXT), ',') AS all_instrument_ids
             FROM students s
             LEFT JOIN instrument_checkouts ic ON ic.student_id = s.id
             LEFT JOIN instruments i ON i.id = ic.instrument_id
@@ -205,7 +212,10 @@ def get_all_instruments():
                 (SELECT GROUP_CONCAT(st.name, ', ')
                  FROM instrument_checkouts ic
                  JOIN students st ON ic.student_id = st.id
-                 WHERE ic.instrument_id = i.id) AS all_student_names
+                 WHERE ic.instrument_id = i.id) AS all_student_names,
+                (SELECT GROUP_CONCAT(ic2.student_id, ',')
+                 FROM instrument_checkouts ic2
+                 WHERE ic2.instrument_id = i.id) AS all_student_ids
             FROM instruments i
             LEFT JOIN students s ON i.current_student_id = s.id
             ORDER BY i.name COLLATE NOCASE, i.model COLLATE NOCASE

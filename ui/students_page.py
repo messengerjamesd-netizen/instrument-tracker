@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QItemSelection, QItemSelectionModel, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -90,7 +90,7 @@ class EditStudentDialog(QDialog):
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class StudentsPage(QWidget):
-    navigate_to_instrument = Signal(int)
+    navigate_to_instrument = Signal(object)  # emits list of instrument IDs
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -267,12 +267,18 @@ class StudentsPage(QWidget):
                     label += f" + {count - 1} more"
                 instr_item = QTableWidgetItem(label)
                 instr_item.setForeground(QColor("#7eb8f7"))
-                instr_item.setToolTip("Click to view this instrument")
+                all_instr_names = s["all_instrument_names"] or ""
+                if count > 1 and all_instr_names:
+                    instr_item.setToolTip(all_instr_names.replace(", ", "\n"))
+                else:
+                    instr_item.setToolTip("Click to view this instrument")
             else:
                 instr_item = QTableWidgetItem("—")
             instr_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             instr_item.setData(Qt.UserRole, s["id"])
             instr_item.setData(Qt.UserRole + 1, instrument_id)
+            all_ids_raw = s["all_instrument_ids"] or ""
+            instr_item.setData(Qt.UserRole + 2, all_ids_raw)
             self.table.setItem(r, 4, instr_item)
 
         self.table.setSortingEnabled(True)
@@ -301,20 +307,42 @@ class StudentsPage(QWidget):
             s for s in self._data
             if any(
                 text in str(v or "").lower()
-                for v in [s["name"], s["student_id"], s["grade"], s["instrument_name"]]
+                for v in [s["name"], s["student_id"], s["grade"],
+                          s["all_instrument_names"]]
             )
         ]
         self._populate(filtered)
 
-    def show_student(self, student_id):
+    def show_student(self, student_ids):
+        if isinstance(student_ids, int):
+            student_ids = [student_ids]
         self.search_box.clear()
         self.refresh()
+        id_set = set(student_ids)
+        first_item = None
+        found = 0
+        sel_model = self.table.selectionModel()
+        sel_model.clearSelection()
+        ncols = self.table.columnCount()
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == student_id:
-                self.table.selectRow(row)
-                self.table.scrollToItem(item)
-                break
+            if item and item.data(Qt.UserRole) in id_set:
+                sel = QItemSelection(
+                    self.table.model().index(row, 0),
+                    self.table.model().index(row, ncols - 1),
+                )
+                sel_model.select(sel, QItemSelectionModel.Select)
+                if first_item is None:
+                    first_item = item
+                found += 1
+        if first_item:
+            self.table.scrollToItem(first_item)
+        if found > 1:
+            prev = self.row_count_label.text()
+            self.row_count_label.setText(
+                f"{found} students sharing this instrument — highlighted above"
+            )
+            QTimer.singleShot(5000, lambda: self.row_count_label.setText(prev))
 
     def _on_cell_hovered(self, row, col):
         self._clear_link_hover()
@@ -324,6 +352,7 @@ class StudentsPage(QWidget):
             font.setBold(True)
             item.setFont(font)
             self._hovered_link_cell = (row, col)
+            self.table.viewport().setCursor(Qt.PointingHandCursor)
 
     def _clear_link_hover(self):
         if self._hovered_link_cell:
@@ -334,6 +363,7 @@ class StudentsPage(QWidget):
                 font.setBold(False)
                 item.setFont(font)
             self._hovered_link_cell = None
+            self.table.viewport().unsetCursor()
 
     def eventFilter(self, obj, event):
         if obj is self.table.viewport() and event.type() == QEvent.Leave:
@@ -346,9 +376,15 @@ class StudentsPage(QWidget):
         item = self.table.item(row, 4)
         if not item:
             return
+        all_ids_raw = item.data(Qt.UserRole + 2) or ""
+        if all_ids_raw:
+            ids = [int(x) for x in all_ids_raw.split(",") if x.strip()]
+            if ids:
+                self.navigate_to_instrument.emit(ids)
+                return
         instrument_id = item.data(Qt.UserRole + 1)
         if instrument_id:
-            self.navigate_to_instrument.emit(instrument_id)
+            self.navigate_to_instrument.emit([instrument_id])
 
     def _selected_student_id(self):
         row = self.table.currentRow()

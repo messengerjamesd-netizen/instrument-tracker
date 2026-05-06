@@ -58,13 +58,13 @@ class MainWindow(QMainWindow):
         instruments_page = self._items[1][1]
         students_page    = self._items[2][1]
         actions_tab.navigate_to_instrument.connect(
-            lambda iid: (self._navigate(1), instruments_page.show_instrument(iid))
+            lambda iid: (self._navigate(1), instruments_page.show_instrument([iid]))
         )
         students_page.navigate_to_instrument.connect(
-            lambda iid: (self._navigate(1), instruments_page.show_instrument(iid))
+            lambda ids: (self._navigate(1), instruments_page.show_instrument(ids))
         )
         instruments_page.navigate_to_student.connect(
-            lambda sid: (self._navigate(2), students_page.show_student(sid))
+            lambda ids: (self._navigate(2), students_page.show_student(ids))
         )
         instruments_page.status_changed.connect(actions_tab._refresh_activity)
 

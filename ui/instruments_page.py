@@ -1,7 +1,7 @@
 import csv
 import os
 
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal, QEvent, QItemSelection, QItemSelectionModel, QTimer
 from PySide6.QtGui import QColor, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
@@ -476,10 +476,124 @@ class RepairReturnDialog(QDialog):
         self.accept()
 
 
+# ── Summer Hold multi-student dialog ──────────────────────────────────────────
+
+class SummerHoldMultiStudentDialog(QDialog):
+    """Ask how to apply Summer Hold when an instrument has multiple students."""
+
+    def __init__(self, instrument, active_checkouts, parent=None):
+        super().__init__(parent)
+        self.mode = "all"            # "all" or "one"
+        self.summer_student_id = None
+        self.other_action = "keep"   # "keep" or "checkin"
+
+        name = instrument["name"]
+        serial = instrument["serial_number"] or "no serial"
+        self.setWindowTitle(f"Summer Hold — {name}")
+        self.setMinimumWidth(460)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        hdr = QLabel(f"<b>{name}</b>  <span style='color:#5a7aaa'>({serial})</span>")
+        hdr.setStyleSheet("font-size: 14px;")
+        layout.addWidget(hdr)
+
+        names = ", ".join(c["student_name"] for c in active_checkouts)
+        layout.addWidget(QLabel(f"Currently checked out to: <b>{names}</b>"))
+
+        sep = QFrame(); sep.setFrameShape(QFrame.HLine); sep.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep)
+
+        layout.addWidget(QLabel("Apply Summer Hold to:"))
+        self._scope_group = QButtonGroup(self)
+        self._rb_all = QRadioButton("All students")
+        self._rb_all.setChecked(True)
+        self._scope_group.addButton(self._rb_all, 0)
+        layout.addWidget(self._rb_all)
+        all_note = QLabel("All students stay linked to this instrument while it's on hold.")
+        all_note.setStyleSheet("color: #7a8fa8; font-style: italic; margin-left: 20px;")
+        all_note.setWordWrap(True)
+        layout.addWidget(all_note)
+        self._rb_one = QRadioButton("Just one student")
+        self._scope_group.addButton(self._rb_one, 1)
+        layout.addWidget(self._rb_one)
+        self._rb_one.toggled.connect(lambda on: all_note.setVisible(not on))
+
+        # Detail section — shown only when "just one" is selected
+        self._detail_widget = QWidget()
+        detail_layout = QVBoxLayout(self._detail_widget)
+        detail_layout.setContentsMargins(18, 6, 0, 0)
+        detail_layout.setSpacing(8)
+
+        lbl_which = QLabel("Which student gets Summer Hold?")
+        lbl_which.setStyleSheet("font-weight: bold;")
+        detail_layout.addWidget(lbl_which)
+        self._student_group = QButtonGroup(self)
+        self._active_checkouts = active_checkouts
+        for i, co in enumerate(active_checkouts):
+            rb = QRadioButton(co["student_name"])
+            rb.setProperty("student_db_id", co["student_id"])
+            if i == 0:
+                rb.setChecked(True)
+            self._student_group.addButton(rb, i)
+            detail_layout.addWidget(rb)
+            rb.toggled.connect(self._update_other_label)
+
+        self._other_label = QLabel()
+        self._other_label.setStyleSheet("font-weight: bold;")
+        detail_layout.addWidget(self._other_label)
+        self._update_other_label()
+        self._action_group = QButtonGroup(self)
+        rb_keep = QRadioButton("Keep Checked Out")
+        rb_keep.setChecked(True)
+        self._action_group.addButton(rb_keep, 0)
+        detail_layout.addWidget(rb_keep)
+        rb_ci = QRadioButton("Check In now")
+        self._action_group.addButton(rb_ci, 1)
+        detail_layout.addWidget(rb_ci)
+
+        layout.addWidget(self._detail_widget)
+        self._detail_widget.setVisible(False)
+
+        self._rb_one.toggled.connect(self._detail_widget.setVisible)
+
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine); sep2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(sep2)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._confirm)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _update_other_label(self, _=None):
+        checked = self._student_group.checkedButton()
+        if not checked:
+            return
+        summer_id = checked.property("student_db_id")
+        others = [c["student_name"] for c in self._active_checkouts
+                  if c["student_id"] != summer_id]
+        if len(self._active_checkouts) == 2:
+            self._other_label.setText(f"What about {others[0]}?")
+        else:
+            self._other_label.setText("What about the other students?")
+
+    def _confirm(self):
+        if self._rb_all.isChecked():
+            self.mode = "all"
+        else:
+            self.mode = "one"
+            checked = self._student_group.checkedButton()
+            self.summer_student_id = checked.property("student_db_id") if checked else None
+            self.other_action = "checkin" if self._action_group.checkedId() == 1 else "keep"
+        self.accept()
+
+
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class InstrumentsPage(QWidget):
-    navigate_to_student = Signal(int)
+    navigate_to_student = Signal(object)  # emits list of student IDs
     status_changed = Signal()
 
     def __init__(self, parent=None):
@@ -759,10 +873,12 @@ class InstrumentsPage(QWidget):
             if student_id and student_item:
                 student_item.setForeground(QColor("#7eb8f7"))
                 if all_names_raw and "," in all_names_raw:
-                    student_item.setToolTip(all_names_raw.replace(",", "\n"))
+                    student_item.setToolTip(all_names_raw.replace(", ", "\n"))
                 else:
                     student_item.setToolTip("Click to view this student")
                 student_item.setData(Qt.UserRole + 1, student_id)
+                all_ids_raw = instr["all_student_ids"] or ""
+                student_item.setData(Qt.UserRole + 2, all_ids_raw)
 
             status_item = self.table.item(r, 4)
             if instr["status"] == "Available":
@@ -914,6 +1030,20 @@ class InstrumentsPage(QWidget):
     def _do_summer_hold(self, instr):
         """Handle changing an instrument to Summer Hold. Returns True if successful."""
         if instr["current_student_id"]:
+            active = db.get_instrument_active_checkouts(instr["id"])
+            if len(active) > 1:
+                dlg = SummerHoldMultiStudentDialog(instr, active, self)
+                if dlg.exec() != QDialog.Accepted:
+                    return False
+                if dlg.mode == "one" and dlg.summer_student_id is not None:
+                    other_ids = [c["student_id"] for c in active
+                                 if c["student_id"] != dlg.summer_student_id]
+                    if dlg.other_action == "checkin":
+                        for oid in other_ids:
+                            db.checkin_instrument(instr["id"], student_db_id=oid)
+                    db.update_instrument_status(instr["id"], "Summer Hold")
+                    db.log_status_change(instr["id"], "summer_hold")
+                    return True
             db.update_instrument_status(instr["id"], "Summer Hold")
             db.log_status_change(instr["id"], "summer_hold")
             return True
@@ -1382,6 +1512,7 @@ class InstrumentsPage(QWidget):
             font.setBold(True)
             item.setFont(font)
             self._hovered_link_cell = (row, col)
+            self.table.viewport().setCursor(Qt.PointingHandCursor)
 
     def _clear_link_hover(self):
         if self._hovered_link_cell:
@@ -1392,6 +1523,7 @@ class InstrumentsPage(QWidget):
                 font.setBold(False)
                 item.setFont(font)
             self._hovered_link_cell = None
+            self.table.viewport().unsetCursor()
 
     def eventFilter(self, obj, event):
         if obj is self.table.viewport() and event.type() == QEvent.Leave:
@@ -1404,20 +1536,47 @@ class InstrumentsPage(QWidget):
         item = self.table.item(row, 5)
         if not item:
             return
+        all_ids_raw = item.data(Qt.UserRole + 2) or ""
+        if all_ids_raw:
+            ids = [int(x) for x in all_ids_raw.split(",") if x.strip()]
+            if ids:
+                self.navigate_to_student.emit(ids)
+                return
         student_id = item.data(Qt.UserRole + 1)
         if student_id:
-            self.navigate_to_student.emit(student_id)
+            self.navigate_to_student.emit([student_id])
 
-    def show_instrument(self, instrument_id):
+    def show_instrument(self, instrument_ids):
+        if isinstance(instrument_ids, int):
+            instrument_ids = [instrument_ids]
         self.status_filter.setCurrentIndex(0)
         self.search_box.clear()
         self.refresh()
+        id_set = set(instrument_ids)
+        first_item = None
+        found = 0
+        sel_model = self.table.selectionModel()
+        sel_model.clearSelection()
+        ncols = self.table.columnCount()
         for row in range(self.table.rowCount()):
             item = self.table.item(row, 0)
-            if item and item.data(Qt.UserRole) == instrument_id:
-                self.table.selectRow(row)
-                self.table.scrollToItem(item)
-                break
+            if item and item.data(Qt.UserRole) in id_set:
+                sel = QItemSelection(
+                    self.table.model().index(row, 0),
+                    self.table.model().index(row, ncols - 1),
+                )
+                sel_model.select(sel, QItemSelectionModel.Select)
+                if first_item is None:
+                    first_item = item
+                found += 1
+        if first_item:
+            self.table.scrollToItem(first_item)
+        if found > 1:
+            prev = self.row_count_label.text()
+            self.row_count_label.setText(
+                f"{found} instruments checked out to this student — highlighted above"
+            )
+            QTimer.singleShot(5000, lambda: self.row_count_label.setText(prev))
 
     def _view_details(self):
         iid = self._selected_instrument_id()
