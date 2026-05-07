@@ -116,12 +116,17 @@ class InstrumentDetailDialog(QDialog):
             ["Action", "Student", "Timestamp", "Notes", "Photos"]
         )
         hdr = self.history_table.horizontalHeader()
-        hdr.setSectionResizeMode(QHeaderView.Stretch)
-        hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(QHeaderView.Interactive)
+        hdr.setStretchLastSection(True)
+        self.history_table.setColumnWidth(0, 130)
+        self.history_table.setColumnWidth(1, 120)
+        self.history_table.setColumnWidth(2, 140)
+        self.history_table.setColumnWidth(3, 120)
         self.history_table.setAlternatingRowColors(True)
         self.history_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.verticalHeader().setVisible(False)
+        self.history_table.setSortingEnabled(True)
         self.history_table.selectionModel().selectionChanged.connect(
             self._on_history_selection
         )
@@ -149,6 +154,7 @@ class InstrumentDetailDialog(QDialog):
 
     def _load_history(self):
         records = db.get_instrument_history(self.instrument_id)
+        self.history_table.setSortingEnabled(False)
         self.history_table.setRowCount(len(records))
         action_map = {
             "check_out":       "Check Out",
@@ -156,6 +162,7 @@ class InstrumentDetailDialog(QDialog):
             "needs_repair":    "Needs Repair",
             "out_for_repair":  "Out for Repair",
             "repair_returned": "Returned from Repair",
+            "summer_hold":     "Summer Hold",
         }
         for row, r in enumerate(records):
             action_label = action_map.get(r["action"], r["action"])
@@ -184,6 +191,7 @@ class InstrumentDetailDialog(QDialog):
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 item.setData(Qt.UserRole, dict(r))
                 self.history_table.setItem(row, col, item)
+        self.history_table.setSortingEnabled(True)
 
     def _on_history_selection(self):
         row = self.history_table.currentRow()
@@ -253,6 +261,7 @@ class InstrumentDetailDialog(QDialog):
         self.contracts_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.contracts_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.contracts_table.verticalHeader().setVisible(False)
+        self.contracts_table.setSortingEnabled(True)
         layout.addWidget(self.contracts_table)
 
         view_btn = QPushButton("View Scan File")
@@ -267,6 +276,7 @@ class InstrumentDetailDialog(QDialog):
 
     def _load_contracts(self):
         records = db.get_contracts_for_instrument(self.instrument_id)
+        self.contracts_table.setSortingEnabled(False)
         self.contracts_table.setRowCount(len(records))
         for row, r in enumerate(records):
             vals = [
@@ -281,6 +291,7 @@ class InstrumentDetailDialog(QDialog):
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 item.setData(Qt.UserRole, dict(r))
                 self.contracts_table.setItem(row, col, item)
+        self.contracts_table.setSortingEnabled(True)
 
     def _view_scan(self):
         row = self.contracts_table.currentRow()

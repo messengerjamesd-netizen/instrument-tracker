@@ -34,6 +34,7 @@ class OptionsTab(QWidget):
         layout.addWidget(self._build_appearance_group())
         layout.addWidget(self._build_security_group())
         layout.addWidget(self._build_backup_group())
+        layout.addWidget(self._build_updates_group())
         layout.addStretch()
 
     # ── Appearance ────────────────────────────────────────────────────────────
@@ -333,3 +334,52 @@ class OptionsTab(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "Restore Failed", str(e))
+
+    # ── App Updates ───────────────────────────────────────────────────────────
+
+    def _build_updates_group(self):
+        import main as _m
+        group = QGroupBox("App Updates")
+        v = QVBoxLayout(group)
+        v.setSpacing(10)
+
+        btn_row = QHBoxLayout()
+        self._check_update_btn = QPushButton("Check for Updates")
+        self._check_update_btn.setMinimumHeight(36)
+        self._check_update_btn.clicked.connect(self._check_for_updates)
+        btn_row.addWidget(self._check_update_btn)
+        btn_row.addStretch()
+        v.addLayout(btn_row)
+
+        v.addWidget(QLabel(f"Current version: {_m.APP_VERSION}"))
+        return group
+
+    def _check_for_updates(self):
+        import main as _m
+        from ui.update_checker import UpdateChecker
+        self._upd_found = False
+        self._check_update_btn.setEnabled(False)
+        self._check_update_btn.setText("Checking…")
+        self._upd_checker = UpdateChecker(_m.APP_VERSION, _m.APP_GITHUB_REPO, self)
+        self._upd_checker.update_available.connect(self._on_manual_update_available)
+        self._upd_checker.finished.connect(self._on_manual_update_done)
+        self._upd_checker.start()
+
+    def _on_manual_update_available(self, new_version, download_url):
+        self._upd_found = True
+        self._pending_update_url = download_url
+        reply = QMessageBox.question(
+            self, "Update Available",
+            f"Version {new_version} is available.\nDownload and install now?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            from ui.update_checker import download_and_launch
+            if download_and_launch(download_url, self):
+                QApplication.instance().quit()
+
+    def _on_manual_update_done(self):
+        self._check_update_btn.setEnabled(True)
+        self._check_update_btn.setText("Check for Updates")
+        if not self._upd_found:
+            QMessageBox.information(self, "Up to Date", "You're running the latest version.")
