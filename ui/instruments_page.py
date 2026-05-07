@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QDialog, QDialogButtonBox, QComboBox, QFormLayout,
     QPlainTextEdit, QFileDialog, QMenu, QScrollArea, QCheckBox, QFrame,
+    QButtonGroup, QRadioButton,
 )
 
 import database as db
@@ -178,9 +179,10 @@ class ChangeStatusDialog(QDialog):
         layout.addRow(self.repair_label, self.repair_notes)
 
         btns = QDialogButtonBox()
+        self._add_btn = None
         if instrument["status"] == "Checked Out":
-            add_btn = btns.addButton("Add Another Student…", QDialogButtonBox.ActionRole)
-            add_btn.clicked.connect(self._on_add_student)
+            self._add_btn = btns.addButton("Add Another Student…", QDialogButtonBox.ActionRole)
+            self._add_btn.clicked.connect(self._on_add_student)
         btns.addButton(QDialogButtonBox.Ok)
         btns.addButton(QDialogButtonBox.Cancel)
         btns.accepted.connect(self._on_accept)
@@ -193,6 +195,8 @@ class ChangeStatusDialog(QDialog):
         visible = status in REPAIR_STATUSES
         self.repair_label.setVisible(visible)
         self.repair_notes.setVisible(visible)
+        if self._add_btn is not None:
+            self._add_btn.setVisible(status == "Checked Out")
 
     def _on_add_student(self):
         self.add_student_requested = True
@@ -292,12 +296,18 @@ class BulkChangeStatusDialog(QDialog):
             label += f"  [{instr['status']}]"
             cb = QCheckBox(label)
             cb.setChecked(instr["id"] in _pre)
+            cb.stateChanged.connect(self._update_sel_label)
             self._list_layout.addWidget(cb)
             self._checkboxes.append((cb, instr))
 
         self._list_layout.addStretch()
         scroll.setWidget(list_widget)
         layout.addWidget(scroll, 1)
+
+        self._sel_label = QLabel("")
+        self._sel_label.setStyleSheet("color: #5a7aaa; font-style: italic;")
+        layout.addWidget(self._sel_label)
+        self._update_sel_label()
 
         btns = QDialogButtonBox()
         apply_btn = btns.addButton("Apply Changes", QDialogButtonBox.AcceptRole)
@@ -314,13 +324,24 @@ class BulkChangeStatusDialog(QDialog):
         self.repair_label.setVisible(visible)
         self.repair_notes.setVisible(visible)
 
+    def _update_sel_label(self, *_):
+        total = sum(1 for cb, _ in self._checkboxes if cb.isChecked())
+        hidden = sum(1 for cb, _ in self._checkboxes if cb.isChecked() and not cb.isVisible())
+        if total == 0:
+            self._sel_label.setText("Nothing selected.")
+        elif hidden:
+            self._sel_label.setText(
+                f"{total} selected  ({hidden} not visible — clear the filter to see {'it' if hidden == 1 else 'them'})"
+            )
+        else:
+            self._sel_label.setText(f"{total} selected")
+
     def _apply_filter(self):
         filter_status = self._filter_combo.currentData()
         for cb, instr in self._checkboxes:
             visible = not filter_status or instr["status"] == filter_status
             cb.setVisible(visible)
-            if not visible:
-                cb.setChecked(False)
+        self._update_sel_label()
 
     def _select_all_visible(self):
         for cb, _ in self._checkboxes:
@@ -334,7 +355,9 @@ class BulkChangeStatusDialog(QDialog):
 
     def _on_accept(self):
         if not any(cb.isChecked() for cb, _ in self._checkboxes):
-            QMessageBox.warning(self, "Nothing Selected", "Select at least one instrument.")
+            QMessageBox.warning(self, "Nothing Selected",
+                                "Select at least one instrument.\n\n"
+                                "If you had selections, a filter may be hiding them.")
             return
         if self.status_combo.currentText() in REPAIR_STATUSES:
             if not self.repair_notes.toPlainText().strip():

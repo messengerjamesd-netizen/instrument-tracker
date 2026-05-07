@@ -507,6 +507,7 @@ class StudentsPage(QWidget):
             QMessageBox.information(self, "No Selection", "Select a student first.")
             return
         dlg = StudentDetailDialog(sid, self)
+        dlg.instruments_changed.connect(self.refresh)
         dlg.exec()
 
     def _delete_student(self):

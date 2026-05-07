@@ -109,6 +109,7 @@ class MainWindow(QMainWindow):
 
     def start_update_check(self, current_version: str, repo: str):
         from ui.update_checker import UpdateChecker
+        self._current_version = current_version
         self._checker = UpdateChecker(current_version, repo, self)
         self._checker.update_available.connect(self._on_update_available)
         self._checker.start()

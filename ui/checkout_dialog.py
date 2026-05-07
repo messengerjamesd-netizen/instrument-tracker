@@ -122,6 +122,18 @@ class CheckoutDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
+        self.student_combo.currentIndexChanged.connect(self._update_confirm_btn)
+        self.student_combo.lineEdit().textChanged.connect(self._update_confirm_btn)
+        self._update_confirm_btn()
+
+    def _update_confirm_btn(self, *_):
+        text = self.student_combo.currentText().strip()
+        matched = any(
+            self.student_combo.itemText(i) == text
+            for i in range(self.student_combo.count())
+        )
+        self.confirm_btn.setEnabled(matched)
+
     def _separator(self):
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
