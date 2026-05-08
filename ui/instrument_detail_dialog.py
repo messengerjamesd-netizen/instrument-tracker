@@ -89,10 +89,15 @@ class _AddContractToInstrumentDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
 
+        instr = db.get_instrument_by_id(self._instrument_id)
+        current_student_id = instr["current_student_id"] if instr else None
+
         self._student_combo = QComboBox()
         self._student_combo.addItem("-- Select Student --", None)
         for s in db.get_all_students():
             self._student_combo.addItem(f"{s['name']} ({s['student_id']})", s["id"])
+            if s["id"] == current_student_id:
+                self._student_combo.setCurrentIndex(self._student_combo.count() - 1)
         layout.addRow("Student *", self._student_combo)
 
         scan_w = QWidget()
@@ -102,14 +107,11 @@ class _AddContractToInstrumentDialog(QDialog):
         self._scan_edit = QLineEdit()
         self._scan_edit.setPlaceholderText("Optional scan/photo…")
         self._scan_edit.setReadOnly(True)
-        file_btn = QPushButton("File…")
-        file_btn.setFixedWidth(50)
+        file_btn = QPushButton("Browse File")
         file_btn.clicked.connect(self._select_file)
-        photo_btn = QPushButton("Photo…")
-        photo_btn.setFixedWidth(55)
+        photo_btn = QPushButton("Take Photo")
         photo_btn.clicked.connect(self._take_photo)
-        clr_btn = QPushButton("✕")
-        clr_btn.setFixedWidth(28)
+        clr_btn = QPushButton("Clear")
         clr_btn.clicked.connect(lambda: self._scan_edit.clear())
         scan_row.addWidget(self._scan_edit)
         scan_row.addWidget(file_btn)

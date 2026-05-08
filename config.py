@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "last_seen_whats_new": "",
     "checkout_multi_hint_dismissed": False,
     "clickable_names_hint_dismissed": False,
+    "onboarding_complete": False,
 }
 
 

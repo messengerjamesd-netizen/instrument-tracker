@@ -127,6 +127,11 @@ class StudentDetailDialog(QDialog):
                 row.addWidget(label)
                 row.addStretch()
 
+                add_contract_btn = QPushButton("Add Contract")
+                add_contract_btn.setMinimumHeight(28)
+                add_contract_btn.clicked.connect(lambda _, iid=instr["id"]: self._do_add_contract(iid))
+                row.addWidget(add_contract_btn)
+
                 ci_btn = QPushButton("Check In")
                 ci_btn.setMinimumHeight(28)
                 ci_btn.clicked.connect(lambda _, i=dict(instr): self._do_check_in(i))
@@ -180,6 +185,17 @@ class StudentDetailDialog(QDialog):
         self._status_label.setVisible(True)
         # Pass `self` as context — timer won't fire if the dialog is destroyed first
         QTimer.singleShot(3000, self, lambda: self._status_label.setVisible(False))
+
+    def _do_add_contract(self, instrument_id):
+        from ui.instrument_detail_dialog import _AddContractToInstrumentDialog
+        dlg = _AddContractToInstrumentDialog(instrument_id, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            db.add_contract(dlg.student_id, instrument_id, dlg.scan_path, dlg.notes)
+            self._show_status("✓ Contract added.")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
 
     def _do_check_in(self, instr):
         from ui.actions_tab import CheckinDialog

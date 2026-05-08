@@ -358,11 +358,23 @@ class OptionsTab(QWidget):
         self._check_update_btn.setMinimumHeight(36)
         self._check_update_btn.clicked.connect(self._check_for_updates)
         btn_row.addWidget(self._check_update_btn)
+
+        restart_tour_btn = QPushButton("Restart Onboarding Tour")
+        restart_tour_btn.setMinimumHeight(36)
+        restart_tour_btn.clicked.connect(self._restart_tour)
+        btn_row.addWidget(restart_tour_btn)
+
         btn_row.addStretch()
         v.addLayout(btn_row)
 
         v.addWidget(QLabel(f"Current version: {_m.APP_VERSION}"))
         return group
+
+    def _restart_tour(self):
+        for w in QApplication.topLevelWidgets():
+            if hasattr(w, "start_onboarding_tour"):
+                w.start_onboarding_tour()
+                return
 
     def _check_for_updates(self):
         import main as _m
