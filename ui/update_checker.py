@@ -62,8 +62,16 @@ def download_and_launch(download_url: str, parent=None):
     Download the installer to a temp file and launch it.
     Returns True if launched successfully, False otherwise.
     """
+    import glob, shutil
     from PySide6.QtWidgets import QProgressDialog, QMessageBox
     from PySide6.QtCore import Qt
+
+    # Clean up leftover temp dirs from previous update downloads
+    for old_dir in glob.glob(os.path.join(tempfile.gettempdir(), "InstrumentTrackerUpdate_*")):
+        try:
+            shutil.rmtree(old_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     tmp_dir = tempfile.mkdtemp(prefix="InstrumentTrackerUpdate_")
     tmp_path = os.path.join(tmp_dir, "InstrumentTracker_Setup.exe")

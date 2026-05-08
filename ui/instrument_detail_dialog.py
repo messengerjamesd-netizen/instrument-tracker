@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QMessageBox, QSizePolicy,
 )
 import database as db
+import config as cfg
 
 
 def _open_file(path):
@@ -130,6 +131,7 @@ class InstrumentDetailDialog(QDialog):
         self.history_table.selectionModel().selectionChanged.connect(
             self._on_history_selection
         )
+        hdr.sortIndicatorChanged.connect(self._on_history_sort_changed)
         layout.addWidget(self.history_table)
 
         # Photo buttons row
@@ -192,6 +194,24 @@ class InstrumentDetailDialog(QDialog):
                 item.setData(Qt.UserRole, dict(r))
                 self.history_table.setItem(row, col, item)
         self.history_table.setSortingEnabled(True)
+        self._restore_history_sort()
+
+    def _on_history_sort_changed(self, col, order):
+        c = cfg.load_config()
+        c["instrument_detail_sort_col"] = col
+        c["instrument_detail_sort_asc"] = (order == Qt.AscendingOrder)
+        cfg.save_config(c)
+
+    def _restore_history_sort(self):
+        c = cfg.load_config()
+        col = c.get("instrument_detail_sort_col", 2)
+        asc = c.get("instrument_detail_sort_asc", False)
+        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
+        hdr = self.history_table.horizontalHeader()
+        hdr.blockSignals(True)
+        hdr.setSortIndicator(col, order)
+        hdr.blockSignals(False)
+        self.history_table.sortItems(col, order)
 
     def _on_history_selection(self):
         row = self.history_table.currentRow()

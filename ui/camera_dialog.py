@@ -36,6 +36,7 @@ class CameraDialog(QDialog):
         self._worker: CameraWorker | None = None
         self.scanned_value = None
         self._ready = False
+        self._camera_opened = False
 
         self._build_ui()
 
@@ -129,10 +130,11 @@ class CameraDialog(QDialog):
             QTimer.singleShot(500, self._check_running)
 
     def _check_running(self):
-        if self._worker and self._worker.isRunning() and self.preview.text():
+        if self._worker and self._worker.isRunning() and self.preview.text() and not self._camera_opened:
             self._on_opened(True)
 
     def _on_opened(self, success):
+        self._camera_opened = True
         if success:
             self._worker.activate(detect_qr=True)
             self._set_live()
@@ -188,9 +190,9 @@ class CameraDialog(QDialog):
 class PhotoCaptureDialog(QDialog):
     """Live camera feed — captures a still photo on demand."""
 
-    def __init__(self, parent=None, save_path=None):
+    def __init__(self, parent=None, save_path=None, title="Capture Photo"):
         super().__init__(parent)
-        self.setWindowTitle("Take Contract Photo")
+        self.setWindowTitle(title)
         self.setMinimumSize(640, 560)
         self.resize(720, 580)
 
@@ -200,6 +202,7 @@ class PhotoCaptureDialog(QDialog):
         self.captured_path = None
         self._save_path = save_path
         self._ready = False
+        self._camera_opened = False
 
         self._build_ui()
 
@@ -230,9 +233,10 @@ class PhotoCaptureDialog(QDialog):
         layout.addWidget(self.status_label)
 
         btn_row = QHBoxLayout()
-        self.capture_btn = QPushButton("Capture Photo")
+        self.capture_btn = QPushButton("Capture Photo  [Space]")
         self.capture_btn.setObjectName("primary")
         self.capture_btn.setEnabled(False)
+        self.capture_btn.setToolTip("Capture Photo (Space)")
         self.capture_btn.clicked.connect(self._capture)
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
@@ -300,10 +304,11 @@ class PhotoCaptureDialog(QDialog):
             QTimer.singleShot(500, self._check_running)
 
     def _check_running(self):
-        if self._worker and self._worker.isRunning() and self.preview.text():
+        if self._worker and self._worker.isRunning() and self.preview.text() and not self._camera_opened:
             self._on_opened(True)
 
     def _on_opened(self, success):
+        self._camera_opened = True
         if success:
             self._worker.activate(detect_qr=False)
             self._set_live()
@@ -314,7 +319,7 @@ class PhotoCaptureDialog(QDialog):
     def _set_live(self):
         self.preview.setStyleSheet("color: #5a7aaa;")
         self.preview.setText("Loading camera preview…")
-        self.status_label.setText("Ready — click Capture Photo when set.")
+        self.status_label.setText("Ready — click Capture Photo or press Space.")
         self.capture_btn.setEnabled(True)
 
     def _set_loading(self, msg):
@@ -323,6 +328,12 @@ class PhotoCaptureDialog(QDialog):
         self.preview.setText(msg)
         self.preview.setStyleSheet("color: #5a7aaa;")
         self.status_label.setText(msg)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space and self.capture_btn.isEnabled():
+            self._capture()
+        else:
+            super().keyPressEvent(event)
 
     def _on_frame(self, frame):
         self._last_frame = frame

@@ -154,7 +154,7 @@ class StudentsPage(QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Stretch)
         hdr.setSectionsClickable(True)
-        hdr.sectionClicked.connect(self._on_header_clicked)
+        hdr.sortIndicatorChanged.connect(self._on_sort_changed)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -162,6 +162,7 @@ class StudentsPage(QWidget):
         self.table.setSelectionMode(QTableWidget.ExtendedSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.doubleClicked.connect(self._view_history)
+        self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
@@ -175,7 +176,9 @@ class StudentsPage(QWidget):
         layout.addWidget(self.row_count_label)
 
         # Bottom action bar — adaptive (single row wide, two rows narrow)
-        def mk(text, slot, danger=False, fixed=False):
+        self._selection_buttons = []
+
+        def mk(text, slot, danger=False, fixed=False, needs_selection=False):
             btn = QPushButton(text)
             btn.setMinimumHeight(34)
             btn.setSizePolicy(
@@ -184,6 +187,9 @@ class StudentsPage(QWidget):
             if danger:
                 btn.setObjectName("danger")
             btn.clicked.connect(slot)
+            if needs_selection:
+                btn.setEnabled(False)
+                self._selection_buttons.append(btn)
             return btn
 
         def sep():
@@ -197,10 +203,10 @@ class StudentsPage(QWidget):
         wide = QHBoxLayout(self._wide_bar)
         wide.setContentsMargins(8, 6, 8, 6)
         wide.setSpacing(8)
-        wide.addWidget(mk("Edit", self._edit_student, fixed=True))
-        wide.addWidget(mk("Delete", self._delete_student, danger=True, fixed=True))
+        wide.addWidget(mk("Edit", self._edit_student, fixed=True, needs_selection=True))
+        wide.addWidget(mk("Delete", self._delete_student, danger=True, fixed=True, needs_selection=True))
         wide.addWidget(sep())
-        wide.addWidget(mk("History", self._view_history))
+        wide.addWidget(mk("History", self._view_history, needs_selection=True))
 
         self._narrow_bar = QWidget()
         self._narrow_bar.setObjectName("bottom_bar")
@@ -209,11 +215,11 @@ class StudentsPage(QWidget):
         narrow.setSpacing(4)
         row1 = QHBoxLayout()
         row1.setSpacing(8)
-        row1.addWidget(mk("Edit", self._edit_student))
-        row1.addWidget(mk("Delete", self._delete_student, danger=True))
+        row1.addWidget(mk("Edit", self._edit_student, needs_selection=True))
+        row1.addWidget(mk("Delete", self._delete_student, danger=True, needs_selection=True))
         row2 = QHBoxLayout()
         row2.setSpacing(8)
-        row2.addWidget(mk("History", self._view_history))
+        row2.addWidget(mk("History", self._view_history, needs_selection=True))
         narrow.addLayout(row1)
         narrow.addLayout(row2)
         self._narrow_bar.hide()
@@ -402,10 +408,16 @@ class StudentsPage(QWidget):
                 ids.append(item.data(Qt.UserRole))
         return ids
 
+    # ── Selection state ───────────────────────────────────────────────────────
+
+    def _on_selection_changed(self):
+        has_sel = self.table.selectionModel().hasSelection()
+        for btn in self._selection_buttons:
+            btn.setEnabled(has_sel)
+
     # ── Sort memory ───────────────────────────────────────────────────────────
 
-    def _on_header_clicked(self, col):
-        order = self.table.horizontalHeader().sortIndicatorOrder()
+    def _on_sort_changed(self, col, order):
         c = cfg.load_config()
         c["students_sort_col"] = col
         c["students_sort_asc"] = (order == Qt.AscendingOrder)
@@ -416,7 +428,11 @@ class StudentsPage(QWidget):
         col = c.get("students_sort_col", 1)
         asc = c.get("students_sort_asc", True)
         order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        self.table.horizontalHeader().setSortIndicator(col, order)
+        hdr = self.table.horizontalHeader()
+        hdr.blockSignals(True)
+        hdr.setSortIndicator(col, order)
+        hdr.blockSignals(False)
+        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

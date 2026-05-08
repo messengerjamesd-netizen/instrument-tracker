@@ -288,7 +288,7 @@ class CheckinDialog(QDialog):
         return line
 
     def _take_condition_photo(self):
-        dlg = PhotoCaptureDialog(self)
+        dlg = PhotoCaptureDialog(self, title="Photograph Instrument Condition")
         if dlg.exec() == QDialog.Accepted and dlg.captured_path:
             self.condition_photo_path = dlg.captured_path
             pix = QPixmap(dlg.captured_path).scaled(

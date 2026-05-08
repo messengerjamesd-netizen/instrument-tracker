@@ -25,6 +25,12 @@ DEFAULT_CONFIG = {
     "instruments_sort_asc": True,
     "students_sort_col": 1,
     "students_sort_asc": True,
+    "instrument_detail_sort_col": 2,
+    "instrument_detail_sort_asc": False,
+    "student_detail_sort_col": 4,
+    "student_detail_sort_asc": False,
+    "checkout_multi_hint_dismissed": False,
+    "clickable_names_hint_dismissed": False,
 }
 
 

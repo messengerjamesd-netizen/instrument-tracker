@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-APP_VERSION     = "2.6.0"
+APP_VERSION     = "2.7.0"
 APP_GITHUB_REPO = "messengerjamesd-netizen/instrument-tracker"
 
 def _splash_msg(splash, app, text):
@@ -101,8 +101,8 @@ def main():
         if pin_dlg.exec() != QDialog.Accepted:
             sys.exit(0)
 
-    window.showMaximized()
     splash.finish(window)
+    window.showMaximized()
     window.raise_()
     window.activateWindow()
 

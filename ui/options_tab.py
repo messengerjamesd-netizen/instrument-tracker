@@ -197,6 +197,13 @@ class OptionsTab(QWidget):
         v.addWidget(QLabel(
             "When enabled, a PIN will be required each time the app is opened."
         ))
+        recovery = QLabel(
+            "If the PIN is forgotten, delete band_tracker_config.json in "
+            "AppData\\Roaming\\InstrumentTracker to reset it."
+        )
+        recovery.setStyleSheet("color: #5a7aaa; font-size: 10px;")
+        recovery.setWordWrap(True)
+        v.addWidget(recovery)
         return group
 
     def _pin_status_text(self):

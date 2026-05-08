@@ -461,7 +461,7 @@ class RepairReturnDialog(QDialog):
         return lbl
 
     def _take_photo(self):
-        dlg = self._PhotoCaptureDialog(self)
+        dlg = self._PhotoCaptureDialog(self, title="Photograph Repair Invoice")
         if dlg.exec() == QDialog.Accepted and dlg.captured_path:
             self.invoice_path = dlg.captured_path
             self._set_thumb(self.inv_thumb, dlg.captured_path)
@@ -508,7 +508,7 @@ class SummerHoldMultiStudentDialog(QDialog):
         super().__init__(parent)
         self.mode = "all"            # "all" or "one"
         self.summer_student_id = None
-        self.other_action = "keep"   # "keep" or "checkin"
+        self.other_action = "checkin"   # always check in the others
 
         name = instrument["name"]
         serial = instrument["serial_number"] or "no serial"
@@ -562,20 +562,11 @@ class SummerHoldMultiStudentDialog(QDialog):
                 rb.setChecked(True)
             self._student_group.addButton(rb, i)
             detail_layout.addWidget(rb)
-            rb.toggled.connect(self._update_other_label)
 
-        self._other_label = QLabel()
-        self._other_label.setStyleSheet("font-weight: bold;")
-        detail_layout.addWidget(self._other_label)
-        self._update_other_label()
-        self._action_group = QButtonGroup(self)
-        rb_keep = QRadioButton("Keep Checked Out")
-        rb_keep.setChecked(True)
-        self._action_group.addButton(rb_keep, 0)
-        detail_layout.addWidget(rb_keep)
-        rb_ci = QRadioButton("Check In now")
-        self._action_group.addButton(rb_ci, 1)
-        detail_layout.addWidget(rb_ci)
+        other_note = QLabel("The other student(s) will be checked in automatically.")
+        other_note.setStyleSheet("color: #7a8fa8; font-style: italic;")
+        other_note.setWordWrap(True)
+        detail_layout.addWidget(other_note)
 
         layout.addWidget(self._detail_widget)
         self._detail_widget.setVisible(False)
@@ -590,18 +581,6 @@ class SummerHoldMultiStudentDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addWidget(btns)
 
-    def _update_other_label(self, _=None):
-        checked = self._student_group.checkedButton()
-        if not checked:
-            return
-        summer_id = checked.property("student_db_id")
-        others = [c["student_name"] for c in self._active_checkouts
-                  if c["student_id"] != summer_id]
-        if len(self._active_checkouts) == 2:
-            self._other_label.setText(f"What about {others[0]}?")
-        else:
-            self._other_label.setText("What about the other students?")
-
     def _confirm(self):
         if self._rb_all.isChecked():
             self.mode = "all"
@@ -609,7 +588,6 @@ class SummerHoldMultiStudentDialog(QDialog):
             self.mode = "one"
             checked = self._student_group.checkedButton()
             self.summer_student_id = checked.property("student_db_id") if checked else None
-            self.other_action = "checkin" if self._action_group.checkedId() == 1 else "keep"
         self.accept()
 
 
@@ -626,15 +604,22 @@ class InstrumentsPage(QWidget):
         self.refresh()
 
     def _build_ui(self):
+        self._selection_buttons = []  # buttons enabled only when a row is selected
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 8)
         layout.setSpacing(10)
 
         # ── Canonical filter widgets (always drive _apply_filter) ────────────────
-        self.status_filter = QComboBox()
-        self.status_filter.addItem("All Statuses", "")
-        for s in STATUSES:
-            self.status_filter.addItem(s, s)
+        def _build_status_combo():
+            cb = QComboBox()
+            cb.addItem("All Statuses", "")
+            for s in STATUSES:
+                cb.addItem(s, s)
+            cb.insertSeparator(cb.count())
+            cb.addItem("Has Repair Invoice", "__invoice__")
+            return cb
+
+        self.status_filter = _build_status_combo()
         self.status_filter.currentIndexChanged.connect(self._apply_filter)
 
         self.search_box = QLineEdit()
@@ -644,28 +629,19 @@ class InstrumentsPage(QWidget):
         self.search_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_box.textChanged.connect(lambda _: self._apply_filter())
 
-        self.invoice_filter_cb = QCheckBox("Has Repair Invoice")
-        self.invoice_filter_cb.stateChanged.connect(lambda _: self._apply_filter())
-
         # Narrow-bar mirror widgets (synced bidirectionally; no infinite loops
         # because Qt only emits these signals when the value actually changes)
-        _status_n = QComboBox()
-        _status_n.addItem("All Statuses", "")
-        for s in STATUSES:
-            _status_n.addItem(s, s)
+        _status_n = _build_status_combo()
         _search_n = QLineEdit()
         _search_n.setObjectName("search")
         _search_n.setPlaceholderText("Filter by name, model, serial, student…")
         _search_n.setMinimumWidth(80)
         _search_n.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        _invoice_n = QCheckBox("Has Repair Invoice")
 
         self.status_filter.currentIndexChanged.connect(_status_n.setCurrentIndex)
         _status_n.currentIndexChanged.connect(self.status_filter.setCurrentIndex)
         self.search_box.textChanged.connect(_search_n.setText)
         _search_n.textChanged.connect(self.search_box.setText)
-        self.invoice_filter_cb.stateChanged.connect(_invoice_n.setCheckState)
-        _invoice_n.stateChanged.connect(self.invoice_filter_cb.setCheckState)
 
         def _make_import_btn():
             b = QPushButton("Import Spreadsheet")
@@ -693,7 +669,14 @@ class InstrumentsPage(QWidget):
         _help_tip = (
             "Right-click the Status column to change an instrument's status.\n\n"
             "Double-click a row to view full history and contracts.\n\n"
-            "Ctrl+click or Shift+click to select multiple rows for bulk actions."
+            "Ctrl+click or Shift+click to select multiple rows for bulk actions.\n\n"
+            "Keyboard shortcuts (with table focused):\n"
+            "  Delete — delete selected instrument(s)\n"
+            "  Enter or F2 — edit selected instrument\n\n"
+            "Student and instrument names shown in blue are clickable — "
+            "click to jump directly to that record.\n\n"
+            "An instrument can be checked out to more than one student — "
+            "just check out an already-checked-out instrument to add another student."
         )
 
         def _make_help_btn():
@@ -716,7 +699,6 @@ class InstrumentsPage(QWidget):
         tw.addWidget(QLabel("Search:"))
         tw.addWidget(self.search_box)
         tw.addSpacing(8)
-        tw.addWidget(self.invoice_filter_cb)
         tw.addSpacing(12)
         tw.addWidget(_make_import_btn())
         tw.addWidget(_make_bulk_btn())
@@ -737,7 +719,6 @@ class InstrumentsPage(QWidget):
         tn_row1.addWidget(_search_n)
         tn_row2 = QHBoxLayout()
         tn_row2.setSpacing(8)
-        tn_row2.addWidget(_invoice_n)
         tn_row2.addStretch()
         tn_row2.addWidget(_make_import_btn())
         tn_row2.addWidget(_make_bulk_btn())
@@ -749,6 +730,54 @@ class InstrumentsPage(QWidget):
 
         layout.addWidget(self._top_wide_bar)
         layout.addWidget(self._top_narrow_bar)
+
+        # One-time onboarding hint banner
+        self._hint_banner = QWidget()
+        self._hint_banner.setObjectName("hint_banner")
+        self._hint_banner.setStyleSheet(
+            "#hint_banner { background: #1a3a5c; border: 1px solid #2d6bc4; border-radius: 4px; }"
+        )
+        hint_row = QHBoxLayout(self._hint_banner)
+        hint_row.setContentsMargins(10, 6, 10, 6)
+        hint_row.setSpacing(8)
+        hint_lbl = QLabel(
+            "💡 Tip: An instrument can be checked out to more than one student — "
+            "just check out an already-checked-out instrument to add another student."
+        )
+        hint_lbl.setWordWrap(True)
+        hint_row.addWidget(hint_lbl, 1)
+        hint_dismiss = QPushButton("✕")
+        hint_dismiss.setFixedSize(24, 24)
+        hint_dismiss.setFocusPolicy(Qt.NoFocus)
+        hint_dismiss.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; border: none; background: transparent; }")
+        hint_dismiss.clicked.connect(self._dismiss_hint)
+        hint_row.addWidget(hint_dismiss)
+        self._hint_banner.setVisible(False)
+        layout.addWidget(self._hint_banner)
+
+        # Clickable names hint banner
+        self._names_banner = QWidget()
+        self._names_banner.setObjectName("hint_banner")
+        self._names_banner.setStyleSheet(
+            "#hint_banner { background: #1a3a5c; border: 1px solid #2d6bc4; border-radius: 4px; }"
+        )
+        names_row = QHBoxLayout(self._names_banner)
+        names_row.setContentsMargins(10, 6, 10, 6)
+        names_row.setSpacing(8)
+        names_lbl = QLabel(
+            "💡 Tip: Names shown in blue are clickable — click a student or instrument "
+            "name to jump directly to that record."
+        )
+        names_lbl.setWordWrap(True)
+        names_row.addWidget(names_lbl, 1)
+        names_dismiss = QPushButton("✕")
+        names_dismiss.setFixedSize(24, 24)
+        names_dismiss.setFocusPolicy(Qt.NoFocus)
+        names_dismiss.setStyleSheet("QPushButton { color: #c8d8f0; font-weight: bold; border: none; background: transparent; }")
+        names_dismiss.clicked.connect(self._dismiss_names_hint)
+        names_row.addWidget(names_dismiss)
+        self._names_banner.setVisible(False)
+        layout.addWidget(self._names_banner)
 
         # Table
         self.table = QTableWidget()
@@ -762,7 +791,7 @@ class InstrumentsPage(QWidget):
         hdr.setSectionResizeMode(QHeaderView.Stretch)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hdr.setSectionsClickable(True)
-        hdr.sectionClicked.connect(self._on_header_clicked)
+        hdr.sortIndicatorChanged.connect(self._on_sort_changed)
         self.table.setSortingEnabled(True)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -784,6 +813,8 @@ class InstrumentsPage(QWidget):
         self.row_count_label.setObjectName("status")
         layout.addWidget(self.row_count_label)
 
+        self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
+
         # Bottom action bar — adaptive (single row wide, two rows narrow)
         def mk(text, slot, danger=False, fixed=False):
             btn = QPushButton(text)
@@ -793,7 +824,9 @@ class InstrumentsPage(QWidget):
                 QSizePolicy.Fixed)
             if danger:
                 btn.setObjectName("danger")
+            btn.setEnabled(False)
             btn.clicked.connect(slot)
+            self._selection_buttons.append(btn)
             return btn
 
         def sep():
@@ -843,6 +876,11 @@ class InstrumentsPage(QWidget):
         self._wide_bar.setVisible(not narrow_bottom)
         self._narrow_bar.setVisible(narrow_bottom)
 
+    def _on_selection_changed(self):
+        has_sel = self.table.selectionModel().hasSelection()
+        for btn in self._selection_buttons:
+            btn.setEnabled(has_sel)
+
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
 
     def keyPressEvent(self, event):
@@ -861,6 +899,7 @@ class InstrumentsPage(QWidget):
         self._data = db.get_all_instruments()
         self._apply_filter()
         self._restore_sort()
+        self._show_names_hint_if_needed()
 
     def _populate(self, rows):
         self.table.setSortingEnabled(False)
@@ -878,7 +917,7 @@ class InstrumentsPage(QWidget):
             vals = [
                 str(instr["id"]),
                 instr["name"] or "",
-                instr["model"] or "",
+                instr["model"] or "—",
                 instr["serial_number"] or "",
                 instr["status"] or "",
                 display_students,
@@ -910,6 +949,8 @@ class InstrumentsPage(QWidget):
                 status_item.setForeground(Qt.yellow)
             elif instr["status"] == "Summer Hold":
                 status_item.setForeground(QColor("#7eb8f7"))
+            elif instr["status"] == "Out for Repair":
+                status_item.setForeground(QColor("#e87d2f"))
             else:
                 status_item.setForeground(Qt.red)
 
@@ -933,9 +974,11 @@ class InstrumentsPage(QWidget):
     def _apply_filter(self):
         status = self.status_filter.currentData()
         text = self.search_box.text().lower()
-        invoice_only = self.invoice_filter_cb.isChecked()
         filtered = self._data
-        if status:
+        if status == "__invoice__":
+            ids = db.get_instrument_ids_with_repair_invoices()
+            filtered = [i for i in filtered if i["id"] in ids]
+        elif status:
             filtered = [i for i in filtered if (i["status"] or "") == status]
         if text:
             filtered = [
@@ -946,9 +989,6 @@ class InstrumentsPage(QWidget):
                                i["qr_code_text"], i["all_student_names"]]
                 )
             ]
-        if invoice_only:
-            ids = db.get_instrument_ids_with_repair_invoices()
-            filtered = [i for i in filtered if i["id"] in ids]
         self._populate(filtered)
 
     def _selected_instrument_id(self):
@@ -969,11 +1009,32 @@ class InstrumentsPage(QWidget):
 
     # ── Sort memory ───────────────────────────────────────────────────────────
 
-    def _on_header_clicked(self, col):
-        order = self.table.horizontalHeader().sortIndicatorOrder()
+    def _on_sort_changed(self, col, order):
         c = cfg.load_config()
         c["instruments_sort_col"] = col
         c["instruments_sort_asc"] = (order == Qt.AscendingOrder)
+        cfg.save_config(c)
+
+    def _show_hint_if_needed(self):
+        c = cfg.load_config()
+        if not c.get("checkout_multi_hint_dismissed", False):
+            self._hint_banner.setVisible(True)
+
+    def _dismiss_hint(self):
+        self._hint_banner.setVisible(False)
+        c = cfg.load_config()
+        c["checkout_multi_hint_dismissed"] = True
+        cfg.save_config(c)
+
+    def _show_names_hint_if_needed(self):
+        c = cfg.load_config()
+        if not c.get("clickable_names_hint_dismissed", False):
+            self._names_banner.setVisible(True)
+
+    def _dismiss_names_hint(self):
+        self._names_banner.setVisible(False)
+        c = cfg.load_config()
+        c["clickable_names_hint_dismissed"] = True
         cfg.save_config(c)
 
     def _restore_sort(self):
@@ -981,7 +1042,11 @@ class InstrumentsPage(QWidget):
         col = c.get("instruments_sort_col", 1)
         asc = c.get("instruments_sort_asc", True)
         order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        self.table.horizontalHeader().setSortIndicator(col, order)
+        hdr = self.table.horizontalHeader()
+        hdr.blockSignals(True)
+        hdr.setSortIndicator(col, order)
+        hdr.blockSignals(False)
+        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -1048,6 +1113,7 @@ class InstrumentsPage(QWidget):
             db.add_contract(co_dlg.selected_student_id, instr["id"],
                             co_dlg.contract_photo_path,
                             notes=co_dlg.notes or "Created automatically from checkout.")
+        self._show_hint_if_needed()
         return True
 
     def _do_summer_hold(self, instr):
@@ -1061,9 +1127,8 @@ class InstrumentsPage(QWidget):
                 if dlg.mode == "one" and dlg.summer_student_id is not None:
                     other_ids = [c["student_id"] for c in active
                                  if c["student_id"] != dlg.summer_student_id]
-                    if dlg.other_action == "checkin":
-                        for oid in other_ids:
-                            db.checkin_instrument(instr["id"], student_db_id=oid)
+                    for oid in other_ids:
+                        db.checkin_instrument(instr["id"], student_db_id=oid)
                     db.update_instrument_status(instr["id"], "Summer Hold")
                     db.log_status_change(instr["id"], "summer_hold")
                     return True
@@ -1166,6 +1231,8 @@ class InstrumentsPage(QWidget):
                     return
                 db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
                 instr = db.get_instrument_by_id(iid)
+                if not instr:
+                    return
             if not self._do_summer_hold(instr):
                 return
         elif new_status in REPAIR_STATUSES:
@@ -1205,6 +1272,9 @@ class InstrumentsPage(QWidget):
                         continue
                     db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
                     instr = db.get_instrument_by_id(iid)
+                    if not instr:
+                        cancelled += 1
+                        continue
                 if not self._do_checkout(instr):
                     cancelled += 1
                     continue
@@ -1232,6 +1302,9 @@ class InstrumentsPage(QWidget):
                         continue
                     db.log_repair_return(iid, ret_dlg.notes, ret_dlg.invoice_path)
                     instr = db.get_instrument_by_id(iid)
+                    if not instr:
+                        cancelled += 1
+                        continue
                 if not self._do_summer_hold(instr):
                     cancelled += 1
                     continue
@@ -1404,6 +1477,7 @@ class InstrumentsPage(QWidget):
                     added += 1
                 except Exception:
                     skipped += 1
+                    continue
 
         self.refresh()
         QMessageBox.information(

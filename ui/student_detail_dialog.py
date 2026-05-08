@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QWidget,
 )
 import database as db
+import config as cfg
 
 _ACTION_LABELS = {
     "check_out":      "Checked Out",
@@ -65,9 +66,9 @@ class StudentDetailDialog(QDialog):
 
         # History table
         self.table = QTableWidget()
-        self.table.setColumnCount(5)
+        self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels(
-            ["Instrument", "Model", "Serial Number", "Action", "Date / Notes"]
+            ["Instrument", "Model", "Serial Number", "Action", "Date", "Notes"]
         )
         hdr_view = self.table.horizontalHeader()
         hdr_view.setSectionResizeMode(QHeaderView.Interactive)
@@ -76,11 +77,13 @@ class StudentDetailDialog(QDialog):
         self.table.setColumnWidth(1, 100)
         self.table.setColumnWidth(2, 110)
         self.table.setColumnWidth(3, 100)
+        self.table.setColumnWidth(4, 130)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
+        hdr_view.sortIndicatorChanged.connect(self._on_sort_changed)
         layout.addWidget(self.table)
 
         # Empty-state label shown when history table is empty
@@ -153,25 +156,41 @@ class StudentDetailDialog(QDialog):
         self.table.setRowCount(len(history))
         for r, row in enumerate(history):
             action = _ACTION_LABELS.get(row["action"], row["action"])
-            date_notes = row["timestamp"] or ""
-            if row["notes"]:
-                date_notes += f"  —  {row['notes']}"
             vals = [
                 row["instrument_name"] or "—",
                 row["model"] or "—",
                 row["serial_number"] or "—",
                 action,
-                date_notes,
+                row["timestamp"] or "",
+                row["notes"] or "",
             ]
             for c, val in enumerate(vals):
                 item = QTableWidgetItem(val)
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
+        self._restore_sort()
 
         has_rows = len(history) > 0
         self.table.setVisible(has_rows)
         self._empty_label.setVisible(not has_rows)
+
+    def _on_sort_changed(self, col, order):
+        c = cfg.load_config()
+        c["student_detail_sort_col"] = col
+        c["student_detail_sort_asc"] = (order == Qt.AscendingOrder)
+        cfg.save_config(c)
+
+    def _restore_sort(self):
+        c = cfg.load_config()
+        col = c.get("student_detail_sort_col", 4)
+        asc = c.get("student_detail_sort_asc", False)
+        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
+        hdr = self.table.horizontalHeader()
+        hdr.blockSignals(True)
+        hdr.setSortIndicator(col, order)
+        hdr.blockSignals(False)
+        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 
@@ -219,9 +238,8 @@ class StudentDetailDialog(QDialog):
             if dlg.mode == "one" and dlg.summer_student_id is not None:
                 other_ids = [c["student_id"] for c in active
                              if c["student_id"] != dlg.summer_student_id]
-                if dlg.other_action == "checkin":
-                    for oid in other_ids:
-                        db.checkin_instrument(instr["id"], student_db_id=oid)
+                for oid in other_ids:
+                    db.checkin_instrument(instr["id"], student_db_id=oid)
         else:
             reply = QMessageBox.question(
                 self, "Summer Hold",

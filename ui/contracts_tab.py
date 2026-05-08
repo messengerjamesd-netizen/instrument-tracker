@@ -31,6 +31,16 @@ class ContractsTab(QWidget):
 
         layout.addWidget(self._build_add_group())
 
+        # Search bar
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search:"))
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("Filter by student, instrument, or notes…")
+        self._search_edit.setClearButtonEnabled(True)
+        self._search_edit.textChanged.connect(self._apply_filter)
+        search_row.addWidget(self._search_edit)
+        layout.addLayout(search_row)
+
         # Table
         self.table = QTableWidget()
         self.table.setColumnCount(6)
@@ -46,10 +56,13 @@ class ContractsTab(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.verticalHeader().setVisible(False)
+        self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
         # Bottom bar — adaptive (single row wide, two rows narrow)
-        def mk(text, slot, danger=False, fixed=False):
+        self._selection_buttons = []
+
+        def mk(text, slot, danger=False, fixed=False, needs_selection=False):
             btn = QPushButton(text)
             btn.setMinimumHeight(34)
             btn.setSizePolicy(
@@ -58,6 +71,9 @@ class ContractsTab(QWidget):
             if danger:
                 btn.setObjectName("danger")
             btn.clicked.connect(slot)
+            if needs_selection:
+                btn.setEnabled(False)
+                self._selection_buttons.append(btn)
             return btn
 
         def sep():
@@ -71,10 +87,10 @@ class ContractsTab(QWidget):
         wide = QHBoxLayout(self._wide_bar)
         wide.setContentsMargins(8, 6, 8, 6)
         wide.setSpacing(8)
-        wide.addWidget(mk("Delete", self._delete_contract, danger=True, fixed=True))
+        wide.addWidget(mk("Delete", self._delete_contract, danger=True, fixed=True, needs_selection=True))
         wide.addWidget(sep())
-        wide.addWidget(mk("View Scan", self._view_scan))
-        wide.addWidget(mk("Toggle Active", self._toggle_active))
+        wide.addWidget(mk("View Scan", self._view_scan, needs_selection=True))
+        wide.addWidget(mk("Toggle Active", self._toggle_active, needs_selection=True))
 
         self._narrow_bar = QWidget()
         self._narrow_bar.setObjectName("bottom_bar")
@@ -83,11 +99,11 @@ class ContractsTab(QWidget):
         narrow.setSpacing(4)
         row1 = QHBoxLayout()
         row1.setSpacing(8)
-        row1.addWidget(mk("Delete", self._delete_contract, danger=True))
+        row1.addWidget(mk("Delete", self._delete_contract, danger=True, needs_selection=True))
         row2 = QHBoxLayout()
         row2.setSpacing(8)
-        row2.addWidget(mk("View Scan", self._view_scan))
-        row2.addWidget(mk("Toggle Active", self._toggle_active))
+        row2.addWidget(mk("View Scan", self._view_scan, needs_selection=True))
+        row2.addWidget(mk("Toggle Active", self._toggle_active, needs_selection=True))
         narrow.addLayout(row1)
         narrow.addLayout(row2)
         self._narrow_bar.hide()
@@ -224,6 +240,25 @@ class ContractsTab(QWidget):
         self._wide_bar.setVisible(not narrow)
         self._narrow_bar.setVisible(narrow)
 
+    def _on_selection_changed(self):
+        has_sel = self.table.selectionModel().hasSelection()
+        for btn in self._selection_buttons:
+            btn.setEnabled(has_sel)
+
+    def _apply_filter(self):
+        query = self._search_edit.text().strip().lower()
+        for row in range(self.table.rowCount()):
+            if not query:
+                self.table.setRowHidden(row, False)
+                continue
+            visible = False
+            for col in [1, 2, 4]:  # Student, Instrument, Notes
+                item = self.table.item(row, col)
+                if item and query in item.text().lower():
+                    visible = True
+                    break
+            self.table.setRowHidden(row, not visible)
+
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def refresh(self):
@@ -262,6 +297,7 @@ class ContractsTab(QWidget):
                         it.setForeground(Qt.darkGray)
 
         self.table.setSortingEnabled(True)
+        self._apply_filter()
 
     def _selected_contract(self):
         row = self.table.currentRow()

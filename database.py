@@ -175,11 +175,14 @@ def import_students_from_csv(filepath):
                     if not name or not sid:
                         skipped += 1
                         continue
-                    conn.execute(
+                    result = conn.execute(
                         "INSERT OR IGNORE INTO students (name, student_id, grade) VALUES (?, ?, ?)",
                         (name, sid, grade),
                     )
-                    added += 1
+                    if result.rowcount > 0:
+                        added += 1
+                    else:
+                        skipped += 1
                 except Exception:
                     skipped += 1
     return added, skipped
@@ -239,7 +242,8 @@ def get_current_checkouts():
         return conn.execute("""
             SELECT i.*, s.name AS student_name, s.student_id AS student_number, s.grade
             FROM instruments i
-            JOIN students s ON i.current_student_id = s.id
+            JOIN instrument_checkouts ic ON ic.instrument_id = i.id
+            JOIN students s ON ic.student_id = s.id
             WHERE i.status = 'Checked Out'
             ORDER BY s.name COLLATE NOCASE
         """).fetchall()
@@ -337,18 +341,26 @@ def resume_checkout(instrument_db_id):
             "UPDATE instruments SET status='Checked Out', last_checked_out=? WHERE id=?",
             (now, instrument_db_id),
         )
-        conn.execute(
-            "INSERT INTO checkout_history "
-            "(instrument_id, student_id, action, timestamp, notes) "
-            "VALUES (?, ?, 'check_out', ?, 'Resumed from Summer Hold')",
-            (instrument_db_id, row["current_student_id"], now),
-        )
-        # Ensure all junction-table students are still present (no-op if already there)
+        # Log history for every student in the junction table, not just the primary
         ic_rows = conn.execute(
             "SELECT student_id FROM instrument_checkouts WHERE instrument_id=?",
             (instrument_db_id,),
         ).fetchall()
-        if not ic_rows:
+        if ic_rows:
+            for ic_row in ic_rows:
+                conn.execute(
+                    "INSERT INTO checkout_history "
+                    "(instrument_id, student_id, action, timestamp, notes) "
+                    "VALUES (?, ?, 'check_out', ?, 'Resumed from Summer Hold')",
+                    (instrument_db_id, ic_row["student_id"], now),
+                )
+        else:
+            conn.execute(
+                "INSERT INTO checkout_history "
+                "(instrument_id, student_id, action, timestamp, notes) "
+                "VALUES (?, ?, 'check_out', ?, 'Resumed from Summer Hold')",
+                (instrument_db_id, row["current_student_id"], now),
+            )
             conn.execute(
                 "INSERT OR IGNORE INTO instrument_checkouts (instrument_id, student_id, checkout_date) "
                 "VALUES (?, ?, ?)",
@@ -429,8 +441,8 @@ def checkin_instrument(instrument_db_id, notes="", condition_photo_path="",
                 # Still has other students — update primary student, stay checked out
                 new_primary = remaining[0]["student_id"]
                 conn.execute(
-                    "UPDATE instruments SET current_student_id=?, last_checked_in=? WHERE id=?",
-                    (new_primary, now, instrument_db_id),
+                    "UPDATE instruments SET current_student_id=? WHERE id=?",
+                    (new_primary, instrument_db_id),
                 )
             else:
                 # No one left — fully available

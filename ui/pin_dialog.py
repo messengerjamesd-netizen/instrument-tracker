@@ -46,6 +46,11 @@ class PINLockDialog(QDialog):
         unlock_btn.clicked.connect(self._try_unlock)
         layout.addWidget(unlock_btn)
 
+        hint = QLabel("Forgot your PIN? Ask your administrator to delete\nband_tracker_config.json in AppData\\Roaming\\InstrumentTracker")
+        hint.setStyleSheet("color: #5a7aaa; font-size: 10px;")
+        hint.setAlignment(Qt.AlignCenter)
+        layout.addWidget(hint)
+
     def _try_unlock(self):
         pin = self.pin_input.text()
         if verify_pin(pin, self._stored_hash):
