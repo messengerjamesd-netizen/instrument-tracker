@@ -7,7 +7,6 @@ from PySide6.QtWidgets import (
 )
 
 import database as db
-import config as cfg
 from ui.student_detail_dialog import StudentDetailDialog
 from ui.instruments_page import _read_spreadsheet, _find_col
 
@@ -140,7 +139,12 @@ class StudentsPage(QWidget):
         help_btn.clicked.connect(lambda: QMessageBox.information(
             self, "Tips",
             "Double-click a row to view a student's full instrument history.\n\n"
-            "Ctrl+click or Shift+click to select multiple rows for bulk delete."
+            "Ctrl+click or Shift+click to select multiple rows for bulk delete.\n\n"
+            "Keyboard shortcuts (with table focused):\n"
+            "  Delete — delete selected student(s)\n"
+            "  Enter or F2 — edit selected student\n\n"
+            "Instrument names shown in blue are clickable — "
+            "click to jump directly to that instrument's record."
         ))
         toolbar.addWidget(help_btn)
 
@@ -154,8 +158,8 @@ class StudentsPage(QWidget):
         hdr = self.table.horizontalHeader()
         hdr.setSectionResizeMode(QHeaderView.Stretch)
         hdr.setSectionsClickable(True)
-        hdr.sortIndicatorChanged.connect(self._on_sort_changed)
         self.table.setSortingEnabled(True)
+        hdr.setSortIndicator(1, Qt.AscendingOrder)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -250,7 +254,6 @@ class StudentsPage(QWidget):
     def refresh(self):
         self._data = db.get_student_roster()
         self._apply_filter()
-        self._restore_sort()
 
     def _populate(self, rows):
         self.table.setSortingEnabled(False)
@@ -414,25 +417,6 @@ class StudentsPage(QWidget):
         has_sel = self.table.selectionModel().hasSelection()
         for btn in self._selection_buttons:
             btn.setEnabled(has_sel)
-
-    # ── Sort memory ───────────────────────────────────────────────────────────
-
-    def _on_sort_changed(self, col, order):
-        c = cfg.load_config()
-        c["students_sort_col"] = col
-        c["students_sort_asc"] = (order == Qt.AscendingOrder)
-        cfg.save_config(c)
-
-    def _restore_sort(self):
-        c = cfg.load_config()
-        col = c.get("students_sort_col", 1)
-        asc = c.get("students_sort_asc", True)
-        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        hdr = self.table.horizontalHeader()
-        hdr.blockSignals(True)
-        hdr.setSortIndicator(col, order)
-        hdr.blockSignals(False)
-        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

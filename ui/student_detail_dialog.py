@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QMessageBox, QWidget,
 )
 import database as db
-import config as cfg
 
 _ACTION_LABELS = {
     "check_out":      "Checked Out",
@@ -83,7 +82,7 @@ class StudentDetailDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.verticalHeader().setVisible(False)
         self.table.setSortingEnabled(True)
-        hdr_view.sortIndicatorChanged.connect(self._on_sort_changed)
+        hdr_view.setSortIndicator(4, Qt.DescendingOrder)
         layout.addWidget(self.table)
 
         # Empty-state label shown when history table is empty
@@ -169,28 +168,10 @@ class StudentDetailDialog(QDialog):
                 item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
                 self.table.setItem(r, c, item)
         self.table.setSortingEnabled(True)
-        self._restore_sort()
 
         has_rows = len(history) > 0
         self.table.setVisible(has_rows)
         self._empty_label.setVisible(not has_rows)
-
-    def _on_sort_changed(self, col, order):
-        c = cfg.load_config()
-        c["student_detail_sort_col"] = col
-        c["student_detail_sort_asc"] = (order == Qt.AscendingOrder)
-        cfg.save_config(c)
-
-    def _restore_sort(self):
-        c = cfg.load_config()
-        col = c.get("student_detail_sort_col", 4)
-        asc = c.get("student_detail_sort_asc", False)
-        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        hdr = self.table.horizontalHeader()
-        hdr.blockSignals(True)
-        hdr.setSortIndicator(col, order)
-        hdr.blockSignals(False)
-        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

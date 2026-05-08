@@ -5,12 +5,12 @@ import sys
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QPushButton,
     QTabWidget, QWidget, QTableWidget, QTableWidgetItem,
-    QHeaderView, QMessageBox, QSizePolicy,
+    QHeaderView, QMessageBox, QSizePolicy, QComboBox, QPlainTextEdit,
+    QFileDialog, QFrame, QLineEdit, QDialogButtonBox,
 )
 import database as db
-import config as cfg
 
 
 def _open_file(path):
@@ -73,6 +73,84 @@ class PhotoPreviewDialog(QDialog):
         self.img_label.setPixmap(pix)
 
 
+class _AddContractToInstrumentDialog(QDialog):
+    def __init__(self, instrument_id, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Contract")
+        self.setFixedWidth(440)
+        self._instrument_id = instrument_id
+        self.student_id = None
+        self.scan_path = ""
+        self.notes = ""
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QFormLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        self._student_combo = QComboBox()
+        self._student_combo.addItem("-- Select Student --", None)
+        for s in db.get_all_students():
+            self._student_combo.addItem(f"{s['name']} ({s['student_id']})", s["id"])
+        layout.addRow("Student *", self._student_combo)
+
+        scan_w = QWidget()
+        scan_row = QHBoxLayout(scan_w)
+        scan_row.setContentsMargins(0, 0, 0, 0)
+        scan_row.setSpacing(4)
+        self._scan_edit = QLineEdit()
+        self._scan_edit.setPlaceholderText("Optional scan/photo…")
+        self._scan_edit.setReadOnly(True)
+        file_btn = QPushButton("File…")
+        file_btn.setFixedWidth(50)
+        file_btn.clicked.connect(self._select_file)
+        photo_btn = QPushButton("Photo…")
+        photo_btn.setFixedWidth(55)
+        photo_btn.clicked.connect(self._take_photo)
+        clr_btn = QPushButton("✕")
+        clr_btn.setFixedWidth(28)
+        clr_btn.clicked.connect(lambda: self._scan_edit.clear())
+        scan_row.addWidget(self._scan_edit)
+        scan_row.addWidget(file_btn)
+        scan_row.addWidget(photo_btn)
+        scan_row.addWidget(clr_btn)
+        layout.addRow("Scan File", scan_w)
+
+        self._notes_edit = QPlainTextEdit()
+        self._notes_edit.setPlaceholderText("Notes…")
+        self._notes_edit.setFixedHeight(70)
+        layout.addRow("Notes", self._notes_edit)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addRow(btns)
+
+    def _select_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Scan File", "",
+            "Image/PDF Files (*.jpg *.jpeg *.png *.pdf);;All Files (*)"
+        )
+        if path:
+            self._scan_edit.setText(path)
+
+    def _take_photo(self):
+        from ui.camera_dialog import PhotoCaptureDialog
+        dlg = PhotoCaptureDialog(self)
+        if dlg.exec() == QDialog.Accepted and dlg.captured_path:
+            self._scan_edit.setText(dlg.captured_path)
+
+    def _on_accept(self):
+        if not self._student_combo.currentData():
+            QMessageBox.warning(self, "Required", "Please select a student.")
+            return
+        self.student_id = self._student_combo.currentData()
+        self.scan_path = self._scan_edit.text().strip()
+        self.notes = self._notes_edit.toPlainText().strip()
+        self.accept()
+
+
 class InstrumentDetailDialog(QDialog):
     def __init__(self, instrument_id, parent=None):
         super().__init__(parent)
@@ -128,10 +206,10 @@ class InstrumentDetailDialog(QDialog):
         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.setSortingEnabled(True)
+        hdr.setSortIndicator(2, Qt.DescendingOrder)
         self.history_table.selectionModel().selectionChanged.connect(
             self._on_history_selection
         )
-        hdr.sortIndicatorChanged.connect(self._on_history_sort_changed)
         layout.addWidget(self.history_table)
 
         # Photo buttons row
@@ -194,24 +272,6 @@ class InstrumentDetailDialog(QDialog):
                 item.setData(Qt.UserRole, dict(r))
                 self.history_table.setItem(row, col, item)
         self.history_table.setSortingEnabled(True)
-        self._restore_history_sort()
-
-    def _on_history_sort_changed(self, col, order):
-        c = cfg.load_config()
-        c["instrument_detail_sort_col"] = col
-        c["instrument_detail_sort_asc"] = (order == Qt.AscendingOrder)
-        cfg.save_config(c)
-
-    def _restore_history_sort(self):
-        c = cfg.load_config()
-        col = c.get("instrument_detail_sort_col", 2)
-        asc = c.get("instrument_detail_sort_asc", False)
-        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        hdr = self.history_table.horizontalHeader()
-        hdr.blockSignals(True)
-        hdr.setSortIndicator(col, order)
-        hdr.blockSignals(False)
-        self.history_table.sortItems(col, order)
 
     def _on_history_selection(self):
         row = self.history_table.currentRow()
@@ -267,6 +327,7 @@ class InstrumentDetailDialog(QDialog):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(6)
 
         self.contracts_table = QTableWidget()
         self.contracts_table.setColumnCount(5)
@@ -282,14 +343,50 @@ class InstrumentDetailDialog(QDialog):
         self.contracts_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.contracts_table.verticalHeader().setVisible(False)
         self.contracts_table.setSortingEnabled(True)
+        self.contracts_table.selectionModel().selectionChanged.connect(
+            self._on_contracts_selection
+        )
         layout.addWidget(self.contracts_table)
 
-        view_btn = QPushButton("View Scan File")
-        view_btn.clicked.connect(self._view_scan)
-        h = QHBoxLayout()
-        h.addWidget(view_btn)
-        h.addStretch()
-        layout.addLayout(h)
+        self._contracts_sel_buttons = []
+
+        def mk(text, slot, danger=False, primary=False):
+            btn = QPushButton(text)
+            btn.setMinimumHeight(32)
+            if danger:
+                btn.setObjectName("danger")
+            if primary:
+                btn.setObjectName("primary")
+            btn.clicked.connect(slot)
+            return btn
+
+        add_btn = mk("+ Add Contract", self._add_contract_to_instrument, primary=True)
+
+        self._c_delete_btn = mk("Delete", self._delete_contract_from_instrument, danger=True)
+        self._c_delete_btn.setEnabled(False)
+        self._contracts_sel_buttons.append(self._c_delete_btn)
+
+        self._c_view_btn = mk("View Scan", self._view_scan)
+        self._c_view_btn.setEnabled(False)
+        self._contracts_sel_buttons.append(self._c_view_btn)
+
+        self._c_toggle_btn = mk("Toggle Active", self._toggle_contract_active)
+        self._c_toggle_btn.setEnabled(False)
+        self._contracts_sel_buttons.append(self._c_toggle_btn)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFrameShadow(QFrame.Plain)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        bar.addWidget(add_btn)
+        bar.addStretch()
+        bar.addWidget(sep)
+        bar.addWidget(self._c_delete_btn)
+        bar.addWidget(self._c_view_btn)
+        bar.addWidget(self._c_toggle_btn)
+        layout.addLayout(bar)
 
         self._load_contracts()
         return widget
@@ -313,14 +410,58 @@ class InstrumentDetailDialog(QDialog):
                 self.contracts_table.setItem(row, col, item)
         self.contracts_table.setSortingEnabled(True)
 
-    def _view_scan(self):
+    def _on_contracts_selection(self):
+        has_sel = self.contracts_table.selectionModel().hasSelection()
+        for btn in self._contracts_sel_buttons:
+            btn.setEnabled(has_sel)
+
+    def _selected_contract(self):
         row = self.contracts_table.currentRow()
         if row < 0:
-            QMessageBox.information(self, "No Selection", "Select a contract first.")
+            return None
+        item = self.contracts_table.item(row, 0)
+        return item.data(Qt.UserRole) if item else None
+
+    def _view_scan(self):
+        contract = self._selected_contract()
+        if not contract:
             return
-        data = self.contracts_table.item(row, 0).data(Qt.UserRole)
-        path = data.get("scan_file_path", "")
+        path = contract.get("scan_file_path", "")
         if not path or not os.path.exists(path):
             QMessageBox.warning(self, "No File", "No scan file attached to this contract.")
             return
         _open_file(path)
+
+    def _add_contract_to_instrument(self):
+        if not db.get_all_students():
+            QMessageBox.information(self, "No Students",
+                                    "No students in the system yet.")
+            return
+        dlg = _AddContractToInstrumentDialog(self.instrument_id, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        try:
+            db.add_contract(dlg.student_id, self.instrument_id, dlg.scan_path, dlg.notes)
+            self._load_contracts()
+        except Exception as e:
+            QMessageBox.warning(self, "Error", str(e))
+
+    def _delete_contract_from_instrument(self):
+        contract = self._selected_contract()
+        if not contract:
+            return
+        reply = QMessageBox.warning(
+            self, "Confirm Delete",
+            f"Delete contract #{contract['id']} for {contract['student_name']}?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            db.delete_contract(contract["id"])
+            self._load_contracts()
+
+    def _toggle_contract_active(self):
+        contract = self._selected_contract()
+        if not contract:
+            return
+        db.toggle_contract_active(contract["id"])
+        self._load_contracts()

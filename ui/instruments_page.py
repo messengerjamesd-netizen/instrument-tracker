@@ -791,8 +791,8 @@ class InstrumentsPage(QWidget):
         hdr.setSectionResizeMode(QHeaderView.Stretch)
         hdr.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         hdr.setSectionsClickable(True)
-        hdr.sortIndicatorChanged.connect(self._on_sort_changed)
         self.table.setSortingEnabled(True)
+        hdr.setSortIndicator(1, Qt.AscendingOrder)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -898,7 +898,6 @@ class InstrumentsPage(QWidget):
     def refresh(self):
         self._data = db.get_all_instruments()
         self._apply_filter()
-        self._restore_sort()
         self._show_names_hint_if_needed()
 
     def _populate(self, rows):
@@ -1007,14 +1006,6 @@ class InstrumentsPage(QWidget):
                 ids.append(item.data(Qt.UserRole))
         return ids
 
-    # ── Sort memory ───────────────────────────────────────────────────────────
-
-    def _on_sort_changed(self, col, order):
-        c = cfg.load_config()
-        c["instruments_sort_col"] = col
-        c["instruments_sort_asc"] = (order == Qt.AscendingOrder)
-        cfg.save_config(c)
-
     def _show_hint_if_needed(self):
         c = cfg.load_config()
         if not c.get("checkout_multi_hint_dismissed", False):
@@ -1036,17 +1027,6 @@ class InstrumentsPage(QWidget):
         c = cfg.load_config()
         c["clickable_names_hint_dismissed"] = True
         cfg.save_config(c)
-
-    def _restore_sort(self):
-        c = cfg.load_config()
-        col = c.get("instruments_sort_col", 1)
-        asc = c.get("instruments_sort_asc", True)
-        order = Qt.AscendingOrder if asc else Qt.DescendingOrder
-        hdr = self.table.horizontalHeader()
-        hdr.blockSignals(True)
-        hdr.setSortIndicator(col, order)
-        hdr.blockSignals(False)
-        self.table.sortItems(col, order)
 
     # ── Actions ───────────────────────────────────────────────────────────────
 

@@ -195,15 +195,9 @@ class OptionsTab(QWidget):
 
         v.addLayout(pin_row)
         v.addWidget(QLabel(
-            "When enabled, a PIN will be required each time the app is opened."
+            "When enabled, a PIN will be required each time the app is opened.\n"
+            "A recovery code will be generated when you set the PIN — write it down."
         ))
-        recovery = QLabel(
-            "If the PIN is forgotten, delete band_tracker_config.json in "
-            "AppData\\Roaming\\InstrumentTracker to reset it."
-        )
-        recovery.setStyleSheet("color: #5a7aaa; font-size: 10px;")
-        recovery.setWordWrap(True)
-        v.addWidget(recovery)
         return group
 
     def _pin_status_text(self):
@@ -213,19 +207,21 @@ class OptionsTab(QWidget):
 
     def _toggle_pin(self):
         if self._config["pin_enabled"]:
-            # Must verify current PIN to disable
             dlg = VerifyPINDialog(self._config["pin_hash"], self)
             if dlg.exec() != QDialog.Accepted:
                 return
             self._config["pin_enabled"] = False
             self._config["pin_hash"] = ""
+            self._config["pin_recovery_hash"] = ""
         else:
-            # Set new PIN
             dlg = SetPINDialog(parent=self)
             if dlg.exec() != QDialog.Accepted:
                 return
+            import secrets
+            recovery_code = secrets.token_hex(6).upper()
             self._config["pin_enabled"] = True
             self._config["pin_hash"] = dlg.get_new_hash()
+            self._config["pin_recovery_hash"] = cfg.hash_recovery_code(recovery_code)
 
         try:
             cfg.save_config(self._config)
@@ -237,19 +233,26 @@ class OptionsTab(QWidget):
         )
         self._change_pin_btn.setVisible(self._config["pin_enabled"])
 
-        state = "enabled" if self._config["pin_enabled"] else "disabled"
-        QMessageBox.information(self, "PIN Lock", f"PIN lock has been {state}.")
+        if self._config["pin_enabled"]:
+            from ui.pin_dialog import RecoveryCodeDialog
+            RecoveryCodeDialog(recovery_code, self).exec()
+        else:
+            QMessageBox.information(self, "PIN Lock", "PIN lock has been disabled.")
 
     def _change_pin(self):
         dlg = SetPINDialog(current_hash=self._config["pin_hash"], parent=self)
         if dlg.exec() != QDialog.Accepted:
             return
+        import secrets
+        recovery_code = secrets.token_hex(6).upper()
         self._config["pin_hash"] = dlg.get_new_hash()
+        self._config["pin_recovery_hash"] = cfg.hash_recovery_code(recovery_code)
         try:
             cfg.save_config(self._config)
         except Exception:
             pass
-        QMessageBox.information(self, "PIN Changed", "Your PIN has been updated.")
+        from ui.pin_dialog import RecoveryCodeDialog
+        RecoveryCodeDialog(recovery_code, self).exec()
 
     # ── Backup & Restore ──────────────────────────────────────────────────────
 

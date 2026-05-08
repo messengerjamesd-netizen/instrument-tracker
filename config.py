@@ -21,14 +21,8 @@ DEFAULT_CONFIG = {
     "custom_secondary": "#0a1628",
     "pin_enabled": False,
     "pin_hash": "",
-    "instruments_sort_col": 1,
-    "instruments_sort_asc": True,
-    "students_sort_col": 1,
-    "students_sort_asc": True,
-    "instrument_detail_sort_col": 2,
-    "instrument_detail_sort_asc": False,
-    "student_detail_sort_col": 4,
-    "student_detail_sort_asc": False,
+    "pin_recovery_hash": "",
+    "last_seen_whats_new": "",
     "checkout_multi_hint_dismissed": False,
     "clickable_names_hint_dismissed": False,
 }
@@ -59,3 +53,11 @@ def hash_pin(pin: str) -> str:
 
 def verify_pin(pin: str, stored_hash: str) -> bool:
     return hash_pin(pin) == stored_hash
+
+
+def hash_recovery_code(code: str) -> str:
+    return hashlib.sha256(f"band_tracker_recovery_{code}".encode()).hexdigest()
+
+
+def verify_recovery_code(code: str, stored_hash: str) -> bool:
+    return hash_recovery_code(code) == stored_hash
