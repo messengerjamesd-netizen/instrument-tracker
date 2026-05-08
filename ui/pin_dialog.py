@@ -3,15 +3,16 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QDialogButtonBox, QFrame,
 )
-from config import verify_pin, hash_pin
+from config import verify_pin, hash_pin, verify_recovery_code
 
 
 class PINLockDialog(QDialog):
     """Shown on startup when PIN is enabled. Cannot be dismissed without correct PIN."""
 
-    def __init__(self, stored_hash: str, parent=None):
+    def __init__(self, stored_hash: str, recovery_hash: str = "", parent=None):
         super().__init__(parent)
         self._stored_hash = stored_hash
+        self._recovery_hash = recovery_hash
         self.setWindowTitle("Instrument Tracker — Locked")
         self.setMinimumWidth(320)
         self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint)  # no close button
@@ -46,10 +47,11 @@ class PINLockDialog(QDialog):
         unlock_btn.clicked.connect(self._try_unlock)
         layout.addWidget(unlock_btn)
 
-        hint = QLabel("Forgot your PIN? Ask your administrator to delete\nband_tracker_config.json in AppData\\Roaming\\InstrumentTracker")
-        hint.setStyleSheet("color: #5a7aaa; font-size: 10px;")
-        hint.setAlignment(Qt.AlignCenter)
-        layout.addWidget(hint)
+        forgot_btn = QPushButton("Forgot PIN?")
+        forgot_btn.setFlat(True)
+        forgot_btn.setStyleSheet("color: #5a7aaa; font-size: 10px; border: none;")
+        forgot_btn.clicked.connect(self._try_recovery)
+        layout.addWidget(forgot_btn, alignment=Qt.AlignCenter)
 
     def _try_unlock(self):
         pin = self.pin_input.text()
@@ -59,6 +61,25 @@ class PINLockDialog(QDialog):
             self.error_label.setText("Incorrect PIN. Please try again.")
             self.pin_input.clear()
             self.pin_input.setFocus()
+
+    def _try_recovery(self):
+        if not self._recovery_hash:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "No Recovery Code",
+                "No recovery code has been set up for this PIN.\n\n"
+                "Ask your administrator to reset the PIN in Options → Security."
+            )
+            return
+        dlg = ForgotPINDialog(self._recovery_hash, self)
+        if dlg.exec() == QDialog.Accepted:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "Access Restored",
+                "Access restored using recovery code.\n\n"
+                "Please set a new PIN in Options → Security."
+            )
+            self.accept()
 
     def closeEvent(self, event):
         event.ignore()  # prevent closing without correct PIN
@@ -174,3 +195,93 @@ class VerifyPINDialog(QDialog):
         else:
             self.error_label.setText("Incorrect PIN.")
             self.pin_input.clear()
+
+
+class RecoveryCodeDialog(QDialog):
+    """Shown once after a PIN is set. Displays the recovery code to write down."""
+
+    def __init__(self, code: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Save Your Recovery Code")
+        self.setMinimumWidth(400)
+        # No close button — must acknowledge
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint)
+        self._build_ui(code)
+
+    def _build_ui(self, code: str):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        layout.addWidget(QLabel("<b>Save this recovery code now.</b>"))
+        layout.addWidget(QLabel(
+            "If you ever forget your PIN, this code will unlock the app.\n"
+            "Write it down and keep it somewhere safe — it cannot be shown again."
+        ))
+
+        formatted = f"{code[:4]}-{code[4:8]}-{code[8:]}"
+        code_label = QLabel(formatted)
+        code_label.setAlignment(Qt.AlignCenter)
+        code_label.setStyleSheet(
+            "font-size: 22px; font-weight: bold; font-family: monospace; "
+            "color: #e8f0ff; letter-spacing: 4px; padding: 14px;"
+        )
+        layout.addWidget(code_label)
+
+        warn = QLabel("This code will not be shown again.")
+        warn.setStyleSheet("color: #e08040; font-style: italic;")
+        warn.setAlignment(Qt.AlignCenter)
+        layout.addWidget(warn)
+
+        btns = QDialogButtonBox()
+        ok_btn = btns.addButton("I've Written It Down", QDialogButtonBox.AcceptRole)
+        ok_btn.setObjectName("primary")
+        ok_btn.setMinimumHeight(36)
+        btns.accepted.connect(self.accept)
+        layout.addWidget(btns)
+
+
+class ForgotPINDialog(QDialog):
+    """Enter the paper recovery code to bypass PIN lock."""
+
+    def __init__(self, stored_recovery_hash: str, parent=None):
+        super().__init__(parent)
+        self._stored_recovery_hash = stored_recovery_hash
+        self.setWindowTitle("Enter Recovery Code")
+        self.setMinimumWidth(360)
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        layout.addWidget(QLabel(
+            "Enter the recovery code that was shown when your PIN was set.\n"
+            "Dashes and spaces are ignored."
+        ))
+
+        self.code_input = QLineEdit()
+        self.code_input.setPlaceholderText("e.g. A1B2-C3D4-E5F6")
+        self.code_input.setMinimumHeight(38)
+        self.code_input.setAlignment(Qt.AlignCenter)
+        self.code_input.returnPressed.connect(self._on_accept)
+        layout.addWidget(self.code_input)
+
+        self.error_label = QLabel("")
+        self.error_label.setStyleSheet("color: #e05555;")
+        self.error_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.error_label)
+
+        btns = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self._on_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _on_accept(self):
+        code = self.code_input.text().replace("-", "").replace(" ", "").upper()
+        if verify_recovery_code(code, self._stored_recovery_hash):
+            self.accept()
+        else:
+            self.error_label.setText("Incorrect recovery code. Please try again.")
+            self.code_input.clear()

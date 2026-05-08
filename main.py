@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-APP_VERSION     = "2.7.0"
+APP_VERSION     = "2.7.1"
 APP_GITHUB_REPO = "messengerjamesd-netizen/instrument-tracker"
 
 def _splash_msg(splash, app, text):
@@ -97,7 +97,7 @@ def main():
         from PySide6.QtWidgets import QDialog
         from ui.pin_dialog import PINLockDialog
         splash.close()
-        pin_dlg = PINLockDialog(conf["pin_hash"])
+        pin_dlg = PINLockDialog(conf["pin_hash"], conf.get("pin_recovery_hash", ""))
         if pin_dlg.exec() != QDialog.Accepted:
             sys.exit(0)
 
@@ -106,10 +106,11 @@ def main():
     window.raise_()
     window.activateWindow()
 
-    # Start update check in background (no-op if repo is placeholder or offline)
+    # Start update check and What's New in background (no-op if repo is placeholder or offline)
     if not APP_GITHUB_REPO.startswith("PLACEHOLDER"):
         window._current_version = APP_VERSION
         window.start_update_check(APP_VERSION, APP_GITHUB_REPO)
+        window.check_whats_new(APP_VERSION, APP_GITHUB_REPO)
 
     # Clean up camera on exit
     app.aboutToQuit.connect(CameraManager.instance().shutdown)

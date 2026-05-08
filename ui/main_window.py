@@ -107,6 +107,14 @@ class MainWindow(QMainWindow):
 
         return banner
 
+    def check_whats_new(self, version: str, repo: str):
+        import config as cfg
+        from PySide6.QtCore import QTimer
+        c = cfg.load_config()
+        if c.get("last_seen_whats_new") != version:
+            from ui.whats_new_checker import WhatsNewDialog
+            QTimer.singleShot(500, lambda: WhatsNewDialog(version, repo, self).exec())
+
     def start_update_check(self, current_version: str, repo: str):
         from ui.update_checker import UpdateChecker
         self._current_version = current_version
