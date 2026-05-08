@@ -2,7 +2,7 @@ import sys
 import os
 import time
 
-APP_VERSION     = "2.7.1"
+APP_VERSION     = "2.7.2"
 APP_GITHUB_REPO = "messengerjamesd-netizen/instrument-tracker"
 
 def _splash_msg(splash, app, text):
@@ -111,6 +111,11 @@ def main():
         window._current_version = APP_VERSION
         window.start_update_check(APP_VERSION, APP_GITHUB_REPO)
         window.check_whats_new(APP_VERSION, APP_GITHUB_REPO)
+
+    # First-run onboarding tour
+    if not conf.get("onboarding_complete", False):
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(400, window.start_onboarding_tour)
 
     # Clean up camera on exit
     app.aboutToQuit.connect(CameraManager.instance().shutdown)
