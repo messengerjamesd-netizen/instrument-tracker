@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
     "checkout_multi_hint_dismissed": False,
     "clickable_names_hint_dismissed": False,
     "onboarding_complete": False,
+    "top_grade": 12,
 }
 
 

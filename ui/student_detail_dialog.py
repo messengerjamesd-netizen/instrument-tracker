@@ -37,8 +37,12 @@ class StudentDetailDialog(QDialog):
         name  = student["name"]       if student else "Unknown"
         sid   = student["student_id"] if student else ""
         grade = (student["grade"] or "") if student else ""
+        archived = bool(student["archived"]) if student else False
 
-        layout.addWidget(QLabel(f"<b>{name}</b>"))
+        title = f"<b>{name}</b>"
+        if archived:
+            title += "  <span style='color:#d98c3f;'>(Archived)</span>"
+        layout.addWidget(QLabel(title))
 
         info_row = QHBoxLayout()
         info_row.addWidget(QLabel(f"Student ID: <b>{sid}</b>"))

@@ -4,9 +4,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QMessageBox, QDialog, QDialogButtonBox, QFormLayout, QFileDialog, QFrame,
+    QCheckBox, QScrollArea,
 )
 
 import database as db
+import config as cfg
 from ui.student_detail_dialog import StudentDetailDialog
 from ui.instruments_page import _read_spreadsheet, _find_col
 
@@ -56,9 +58,12 @@ class AddStudentDialog(QDialog):
 
 
 class EditStudentDialog(QDialog):
-    def __init__(self, student, parent=None):
+    def __init__(self, student, parent=None, position=None, total=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Student")
+        title = "Edit Student"
+        if position and total and total > 1:
+            title += f"  ({position} of {total})"
+        self.setWindowTitle(title)
         self.setFixedWidth(380)
 
         layout = QFormLayout(self)
@@ -86,6 +91,106 @@ class EditStudentDialog(QDialog):
         )
 
 
+class AdvanceGradesDialog(QDialog):
+    """Bulk-promote every student's grade by one at the start of a new year."""
+
+    def __init__(self, students, top_grade, parent=None):
+        super().__init__(parent)
+        self.top_grade = top_grade
+        self.setWindowTitle("Advance Grades")
+        self.setMinimumSize(480, 480)
+        self._checkboxes = []  # (checkbox, student, new_grade_int_or_None)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+
+        layout.addWidget(QLabel(
+            "Every checked student's grade will go up by one.\n"
+            f"Students at grade {top_grade} will graduate — they'll be archived instead."
+        ))
+
+        sel_row = QHBoxLayout()
+        all_btn = QPushButton("Select All")
+        all_btn.setMinimumHeight(28)
+        all_btn.clicked.connect(lambda: self._set_all(True))
+        none_btn = QPushButton("Deselect All")
+        none_btn.setMinimumHeight(28)
+        none_btn.clicked.connect(lambda: self._set_all(False))
+        sel_row.addWidget(all_btn)
+        sel_row.addWidget(none_btn)
+        sel_row.addStretch()
+        layout.addLayout(sel_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        list_widget = QWidget()
+        self._list_layout = QVBoxLayout(list_widget)
+        self._list_layout.setSpacing(4)
+        self._list_layout.setContentsMargins(4, 4, 4, 4)
+
+        skipped = 0
+        for s in students:
+            grade_text = (s["grade"] or "").strip()
+            try:
+                grade_num = int(grade_text)
+            except ValueError:
+                skipped += 1
+                continue
+            if grade_num >= top_grade:
+                label = f"{s['name']} ({s['student_id']})  —  Grade {grade_num} → Graduating (will be archived)"
+            else:
+                label = f"{s['name']} ({s['student_id']})  —  Grade {grade_num} → {grade_num + 1}"
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            if grade_num >= top_grade:
+                cb.setStyleSheet("color: #d98c3f;")
+            self._list_layout.addWidget(cb)
+            self._checkboxes.append((cb, s, grade_num))
+
+        self._list_layout.addStretch()
+        scroll.setWidget(list_widget)
+        layout.addWidget(scroll, 1)
+
+        if skipped:
+            note = QLabel(
+                f"{skipped} student{'s' if skipped != 1 else ''} skipped — "
+                "no numeric grade set. Edit them individually if needed."
+            )
+            note.setStyleSheet("color: #5a7aaa; font-style: italic;")
+            note.setWordWrap(True)
+            layout.addWidget(note)
+
+        if not self._checkboxes:
+            layout.addWidget(QLabel("No students with a numeric grade to advance."))
+
+        btns = QDialogButtonBox()
+        apply_btn = btns.addButton("Apply", QDialogButtonBox.AcceptRole)
+        apply_btn.setObjectName("primary")
+        apply_btn.setEnabled(bool(self._checkboxes))
+        btns.addButton("Cancel", QDialogButtonBox.RejectRole)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _set_all(self, checked):
+        for cb, _, _ in self._checkboxes:
+            cb.setChecked(checked)
+
+    def get_selected(self):
+        """Returns (to_promote, to_graduate) — lists of student rows."""
+        to_promote, to_graduate = [], []
+        for cb, student, grade_num in self._checkboxes:
+            if not cb.isChecked():
+                continue
+            if grade_num >= self.top_grade:
+                to_graduate.append(student)
+            else:
+                to_promote.append(student)
+        return to_promote, to_graduate
+
+
 # ── Main page ─────────────────────────────────────────────────────────────────
 
 class StudentsPage(QWidget):
@@ -94,6 +199,7 @@ class StudentsPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._data = []
+        self._view_archived = False
         self._build_ui()
         self.refresh()
 
@@ -131,6 +237,13 @@ class StudentsPage(QWidget):
         add_btn.clicked.connect(self._add_student)
         toolbar.addWidget(add_btn)
 
+        toolbar.addSpacing(12)
+        self._archived_toggle = QPushButton("Show Archived")
+        self._archived_toggle.setCheckable(True)
+        self._archived_toggle.setMinimumHeight(32)
+        self._archived_toggle.toggled.connect(self._toggle_view_archived)
+        toolbar.addWidget(self._archived_toggle)
+
         help_btn = QPushButton("?")
         help_btn.setMinimumHeight(32)
         help_btn.setFixedWidth(32)
@@ -139,9 +252,16 @@ class StudentsPage(QWidget):
         help_btn.clicked.connect(lambda: QMessageBox.information(
             self, "Tips",
             "Double-click a row to view a student's full instrument history.\n\n"
-            "Ctrl+click or Shift+click to select multiple rows for bulk delete.\n\n"
+            "Ctrl+click or Shift+click to select multiple rows for bulk actions.\n\n"
+            "Advance Grades (in Options → Student Records) bumps every student's "
+            "grade by one for the new year — students at the configured top "
+            "grade are archived instead (graduated).\n\n"
+            "Archive removes a student from active lists and pickers without "
+            "deleting their history. Toggle \"Show Archived\" to view, restore, "
+            "or permanently delete archived students.\n\n"
             "Keyboard shortcuts (with table focused):\n"
-            "  Delete — delete selected student(s)\n"
+            "  Delete — archive selected student(s) (or permanently delete, "
+            "when viewing archived students)\n"
             "  Enter or F2 — edit selected student\n\n"
             "Instrument names shown in blue are clickable — "
             "click to jump directly to that instrument's record."
@@ -202,15 +322,25 @@ class StudentsPage(QWidget):
             f.setFrameShadow(QFrame.Plain)
             return f
 
+        self._view_toggle_buttons = []  # (button, visible_when_archived)
+
         self._wide_bar = QWidget()
         self._wide_bar.setObjectName("bottom_bar")
         wide = QHBoxLayout(self._wide_bar)
         wide.setContentsMargins(8, 6, 8, 6)
         wide.setSpacing(8)
         wide.addWidget(mk("Edit", self._edit_student, fixed=True, needs_selection=True))
-        wide.addWidget(mk("Delete", self._delete_student, danger=True, fixed=True, needs_selection=True))
+        archive_btn = mk("Archive", self._archive_student, fixed=True, needs_selection=True)
+        wide.addWidget(archive_btn)
+        unarchive_btn = mk("Unarchive", self._unarchive_student, fixed=True, needs_selection=True)
+        wide.addWidget(unarchive_btn)
+        delete_btn = mk("Delete", self._delete_student, danger=True, fixed=True, needs_selection=True)
+        wide.addWidget(delete_btn)
         wide.addWidget(sep())
         wide.addWidget(mk("History", self._view_history, needs_selection=True))
+        self._view_toggle_buttons += [
+            (archive_btn, False), (unarchive_btn, True), (delete_btn, True),
+        ]
 
         self._narrow_bar = QWidget()
         self._narrow_bar.setObjectName("bottom_bar")
@@ -220,16 +350,25 @@ class StudentsPage(QWidget):
         row1 = QHBoxLayout()
         row1.setSpacing(8)
         row1.addWidget(mk("Edit", self._edit_student, needs_selection=True))
-        row1.addWidget(mk("Delete", self._delete_student, danger=True, needs_selection=True))
+        n_archive_btn = mk("Archive", self._archive_student, needs_selection=True)
+        row1.addWidget(n_archive_btn)
+        n_unarchive_btn = mk("Unarchive", self._unarchive_student, needs_selection=True)
+        row1.addWidget(n_unarchive_btn)
         row2 = QHBoxLayout()
         row2.setSpacing(8)
+        n_delete_btn = mk("Delete", self._delete_student, danger=True, needs_selection=True)
+        row2.addWidget(n_delete_btn)
         row2.addWidget(mk("History", self._view_history, needs_selection=True))
         narrow.addLayout(row1)
         narrow.addLayout(row2)
         self._narrow_bar.hide()
+        self._view_toggle_buttons += [
+            (n_archive_btn, False), (n_unarchive_btn, True), (n_delete_btn, True),
+        ]
 
         layout.addWidget(self._wide_bar)
         layout.addWidget(self._narrow_bar)
+        self._update_view_buttons()
 
     # ── Keyboard shortcuts ────────────────────────────────────────────────────
 
@@ -242,17 +381,29 @@ class StudentsPage(QWidget):
     def keyPressEvent(self, event):
         if self.table.hasFocus():
             if event.key() == Qt.Key_Delete:
-                self._delete_student()
+                self._delete_student() if self._view_archived else self._archive_student()
                 return
             if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_F2):
                 self._edit_student()
                 return
         super().keyPressEvent(event)
 
+    # ── View state ────────────────────────────────────────────────────────────
+
+    def _update_view_buttons(self):
+        for btn, visible_when_archived in self._view_toggle_buttons:
+            btn.setVisible(visible_when_archived == self._view_archived)
+
+    def _toggle_view_archived(self, checked):
+        self._view_archived = checked
+        self._archived_toggle.setText("Show Active" if checked else "Show Archived")
+        self._update_view_buttons()
+        self.refresh()
+
     # ── Data ──────────────────────────────────────────────────────────────────
 
     def refresh(self):
-        self._data = db.get_student_roster()
+        self._data = db.get_student_roster(archived=self._view_archived)
         self._apply_filter()
 
     def _populate(self, rows):
@@ -294,18 +445,22 @@ class StudentsPage(QWidget):
 
         total = len(self._data)
         shown = len(rows)
+        suffix = " (archived)" if self._view_archived else ""
         if total == 0:
-            self.row_count_label.setText(
-                "No students yet — click Add Student or Import Spreadsheet to get started."
-            )
+            if self._view_archived:
+                self.row_count_label.setText("No archived students.")
+            else:
+                self.row_count_label.setText(
+                    "No students yet — click Add Student or Import Spreadsheet to get started."
+                )
         elif shown == 0:
             self.row_count_label.setText("No students match your search.")
         elif shown == total:
             self.row_count_label.setText(
-                f"Showing {shown} student{'s' if shown != 1 else ''}"
+                f"Showing {shown} student{'s' if shown != 1 else ''}{suffix}"
             )
         else:
-            self.row_count_label.setText(f"Showing {shown} of {total} students")
+            self.row_count_label.setText(f"Showing {shown} of {total} students{suffix}")
 
     def _apply_filter(self):
         text = self.search_box.text().lower()
@@ -325,9 +480,16 @@ class StudentsPage(QWidget):
     def show_student(self, student_ids):
         if isinstance(student_ids, int):
             student_ids = [student_ids]
+        id_set = set(student_ids)
+
+        # If none of the target students are in the active roster, they may
+        # have been archived — switch views so the link still resolves.
+        if id_set and not (id_set & {s["id"] for s in db.get_student_roster(archived=False)}):
+            if id_set & {s["id"] for s in db.get_student_roster(archived=True)}:
+                self._archived_toggle.setChecked(True)  # triggers _toggle_view_archived
+
         self.search_box.clear()
         self.refresh()
-        id_set = set(student_ids)
         first_item = None
         found = 0
         sel_model = self.table.selectionModel()
@@ -481,25 +643,36 @@ class StudentsPage(QWidget):
         )
 
     def _edit_student(self):
-        sid = self._selected_student_id()
-        if sid is None:
-            QMessageBox.information(self, "No Selection", "Select a student first.")
+        sids = self._selected_student_ids()
+        if not sids:
+            QMessageBox.information(self, "No Selection", "Select one or more students first.")
             return
-        student = db.get_student_by_id(sid)
-        if not student:
-            return
-        dlg = EditStudentDialog(student, self)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        name, student_id, grade = dlg.get_values()
-        if not name or not student_id:
-            QMessageBox.warning(self, "Required", "Name and Student ID are required.")
-            return
-        try:
-            db.update_student(sid, name, student_id, grade)
-            self.refresh()
-        except Exception as e:
-            QMessageBox.warning(self, "Error", str(e))
+        edited, skipped = 0, 0
+        for i, sid in enumerate(sids, start=1):
+            student = db.get_student_by_id(sid)
+            if not student:
+                continue
+            dlg = EditStudentDialog(student, self, position=i, total=len(sids))
+            if dlg.exec() != QDialog.Accepted:
+                skipped += 1
+                continue
+            name, student_id, grade = dlg.get_values()
+            if not name or not student_id:
+                QMessageBox.warning(self, "Required", "Name and Student ID are required.")
+                skipped += 1
+                continue
+            try:
+                db.update_student(sid, name, student_id, grade)
+                edited += 1
+            except Exception as e:
+                QMessageBox.warning(self, "Error", str(e))
+                skipped += 1
+        self.refresh()
+        if len(sids) > 1:
+            msg = f"Updated {edited} student{'s' if edited != 1 else ''}."
+            if skipped:
+                msg += f"\n{skipped} skipped or cancelled."
+            QMessageBox.information(self, "Done", msg)
 
     def _view_history(self):
         sid = self._selected_student_id()
@@ -535,3 +708,103 @@ class StudentsPage(QWidget):
             for sid in sids:
                 db.delete_student(sid)
             self.refresh()
+
+    def _archive_student(self):
+        sids = self._selected_student_ids()
+        if not sids:
+            QMessageBox.information(self, "No Selection", "Select one or more students first.")
+            return
+
+        blocked, archivable = [], []
+        for sid in sids:
+            student = db.get_student_by_id(sid)
+            if not student:
+                continue
+            if db.get_checked_out_for_student(sid):
+                blocked.append(student)
+            else:
+                archivable.append(student)
+
+        if blocked:
+            names = "\n".join(f"  • {s['name']} ({s['student_id']})" for s in blocked)
+            QMessageBox.warning(
+                self, "Instruments Checked Out",
+                f"These student(s) still have an instrument checked out — "
+                f"check it in before archiving:\n\n{names}"
+            )
+
+        if not archivable:
+            return
+
+        if len(archivable) == 1:
+            s = archivable[0]
+            msg = (f"Archive {s['name']} ({s['student_id']})?\n\n"
+                   "They'll be hidden from active lists and checkout/contract "
+                   "pickers, but their history is kept. You can unarchive them later.")
+        else:
+            names = "\n".join(f"  • {s['name']} ({s['student_id']})" for s in archivable)
+            msg = (f"Archive {len(archivable)} students?\n\n{names}\n\n"
+                   "They'll be hidden from active lists and checkout/contract "
+                   "pickers, but their history is kept. You can unarchive them later.")
+        reply = QMessageBox.question(self, "Confirm Archive", msg,
+                                     QMessageBox.Yes | QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            for s in archivable:
+                db.archive_student(s["id"])
+            self.refresh()
+
+    def _unarchive_student(self):
+        sids = self._selected_student_ids()
+        if not sids:
+            QMessageBox.information(self, "No Selection", "Select one or more students first.")
+            return
+        for sid in sids:
+            db.unarchive_student(sid)
+        self.refresh()
+
+    def _advance_grades(self):
+        top_grade = cfg.load_config().get("top_grade", 12)
+        students = db.get_all_students()
+        if not students:
+            QMessageBox.information(self, "No Students", "No active students in the system yet.")
+            return
+        dlg = AdvanceGradesDialog(students, top_grade, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        to_promote, to_graduate = dlg.get_selected()
+
+        promoted = 0
+        for s in to_promote:
+            new_grade = str(int(s["grade"]) + 1)
+            db.update_student(s["id"], s["name"], s["student_id"], new_grade)
+            promoted += 1
+
+        graduated, blocked = 0, []
+        for s in to_graduate:
+            checked_out = db.get_checked_out_for_student(s["id"])
+            if checked_out:
+                blocked.append((s, checked_out))
+                continue
+            db.archive_student(s["id"])
+            graduated += 1
+
+        self.refresh()
+
+        msg = f"Promoted {promoted} student{'s' if promoted != 1 else ''}."
+        if graduated:
+            msg += f"\nArchived {graduated} graduating student{'s' if graduated != 1 else ''}."
+        QMessageBox.information(self, "Advance Grades Complete", msg)
+
+        if blocked:
+            lines = []
+            for s, instruments in blocked:
+                instr_names = ", ".join(i["name"] for i in instruments)
+                lines.append(f"  • {s['name']} ({s['student_id']}) — still has: {instr_names}")
+            warn_msg = (
+                f"{len(blocked)} student{'s' if len(blocked) != 1 else ''} at grade "
+                f"{top_grade} were NOT advanced or archived, because they still have "
+                f"an instrument checked out:\n\n" + "\n".join(lines) +
+                "\n\nCheck those instruments in, then archive these students manually "
+                "from the Students page (or re-run Advance Grades)."
+            )
+            QMessageBox.warning(self, "Students Not Advanced", warn_msg)

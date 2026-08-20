@@ -117,9 +117,12 @@ class AddInstrumentDialog(QDialog):
 
 
 class EditInstrumentDialog(QDialog):
-    def __init__(self, instrument, parent=None):
+    def __init__(self, instrument, parent=None, position=None, total=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Instrument")
+        title = "Edit Instrument"
+        if position and total and total > 1:
+            title += f"  ({position} of {total})"
+        self.setWindowTitle(title)
         self.setFixedWidth(420)
 
         layout = QFormLayout(self)
@@ -1466,22 +1469,32 @@ class InstrumentsPage(QWidget):
         )
 
     def _edit_instrument(self):
-        iid = self._selected_instrument_id()
-        if iid is None:
-            QMessageBox.information(self, "No Selection", "Select an instrument first.")
+        iids = self._selected_instrument_ids()
+        if not iids:
+            QMessageBox.information(self, "No Selection", "Select one or more instruments first.")
             return
-        instr = db.get_instrument_by_id(iid)
-        if not instr:
-            return
-        dlg = EditInstrumentDialog(instr, self)
-        if dlg.exec() != QDialog.Accepted:
-            return
-        name, model, serial = dlg.get_values()
-        if not name:
-            QMessageBox.warning(self, "Required", "Name cannot be empty.")
-            return
-        db.update_instrument(iid, name, model, serial)
+        edited, skipped = 0, 0
+        for i, iid in enumerate(iids, start=1):
+            instr = db.get_instrument_by_id(iid)
+            if not instr:
+                continue
+            dlg = EditInstrumentDialog(instr, self, position=i, total=len(iids))
+            if dlg.exec() != QDialog.Accepted:
+                skipped += 1
+                continue
+            name, model, serial = dlg.get_values()
+            if not name:
+                QMessageBox.warning(self, "Required", "Name cannot be empty.")
+                skipped += 1
+                continue
+            db.update_instrument(iid, name, model, serial)
+            edited += 1
         self.refresh()
+        if len(iids) > 1:
+            msg = f"Updated {edited} instrument{'s' if edited != 1 else ''}."
+            if skipped:
+                msg += f"\n{skipped} skipped or cancelled."
+            QMessageBox.information(self, "Done", msg)
 
     def _change_status(self):
         iid = self._selected_instrument_id()

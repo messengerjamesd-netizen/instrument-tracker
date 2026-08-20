@@ -29,7 +29,8 @@ def initialize_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 student_id TEXT UNIQUE NOT NULL,
-                grade TEXT
+                grade TEXT,
+                archived INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS instruments (
@@ -83,6 +84,11 @@ def initialize_db():
         if "repair_invoice_path" not in cols:
             conn.execute("ALTER TABLE checkout_history ADD COLUMN repair_invoice_path TEXT")
 
+        # Migrate existing DBs that predate the archived column
+        student_cols = [r[1] for r in conn.execute("PRAGMA table_info(students)")]
+        if "archived" not in student_cols:
+            conn.execute("ALTER TABLE students ADD COLUMN archived INTEGER DEFAULT 0")
+
         # Migrate existing single-student checkouts into junction table
         existing = {(r[0], r[1]) for r in conn.execute(
             "SELECT instrument_id, student_id FROM instrument_checkouts"
@@ -111,14 +117,18 @@ def add_student(name, student_id, grade):
         )
 
 
-def get_all_students():
+def get_all_students(include_archived=False):
     with get_connection() as conn:
+        if include_archived:
+            return conn.execute(
+                "SELECT * FROM students ORDER BY name COLLATE NOCASE"
+            ).fetchall()
         return conn.execute(
-            "SELECT * FROM students ORDER BY name COLLATE NOCASE"
+            "SELECT * FROM students WHERE archived = 0 ORDER BY name COLLATE NOCASE"
         ).fetchall()
 
 
-def get_student_roster():
+def get_student_roster(archived=False):
     with get_connection() as conn:
         return conn.execute("""
             SELECT s.*,
@@ -137,9 +147,10 @@ def get_student_roster():
             FROM students s
             LEFT JOIN instrument_checkouts ic ON ic.student_id = s.id
             LEFT JOIN instruments i ON i.id = ic.instrument_id
+            WHERE s.archived = ?
             GROUP BY s.id
             ORDER BY s.name COLLATE NOCASE
-        """).fetchall()
+        """, (1 if archived else 0,)).fetchall()
 
 
 def get_student_by_id(student_id):
@@ -160,6 +171,16 @@ def update_student(student_db_id, name, student_id, grade):
 def delete_student(student_db_id):
     with get_connection() as conn:
         conn.execute("DELETE FROM students WHERE id=?", (student_db_id,))
+
+
+def archive_student(student_db_id):
+    with get_connection() as conn:
+        conn.execute("UPDATE students SET archived=1 WHERE id=?", (student_db_id,))
+
+
+def unarchive_student(student_db_id):
+    with get_connection() as conn:
+        conn.execute("UPDATE students SET archived=0 WHERE id=?", (student_db_id,))
 
 
 def import_students_from_csv(filepath):

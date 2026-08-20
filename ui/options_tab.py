@@ -33,6 +33,7 @@ class OptionsTab(QWidget):
 
         layout.addWidget(self._build_appearance_group())
         layout.addWidget(self._build_security_group())
+        layout.addWidget(self._build_records_group())
         layout.addWidget(self._build_backup_group())
         layout.addWidget(self._build_updates_group())
         layout.addStretch()
@@ -253,6 +254,68 @@ class OptionsTab(QWidget):
             pass
         from ui.pin_dialog import RecoveryCodeDialog
         RecoveryCodeDialog(recovery_code, self).exec()
+
+    # ── Student Records ───────────────────────────────────────────────────────
+
+    def _build_records_group(self):
+        group = QGroupBox("Student Records")
+        v = QVBoxLayout(group)
+        v.setSpacing(10)
+
+        top_grade_row = QHBoxLayout()
+        top_grade_row.addWidget(QLabel("Top grade taught:"))
+        self.top_grade_combo = QComboBox()
+        for g in range(4, 13):
+            self.top_grade_combo.addItem(f"{g}th grade", g)
+        current_idx = self.top_grade_combo.findData(self._config.get("top_grade", 12))
+        if current_idx >= 0:
+            self.top_grade_combo.setCurrentIndex(current_idx)
+        self.top_grade_combo.currentIndexChanged.connect(self._on_top_grade_changed)
+        top_grade_row.addWidget(self.top_grade_combo)
+        top_grade_row.addStretch()
+        v.addLayout(top_grade_row)
+        v.addWidget(QLabel(
+            "Students at this grade are archived (graduated) instead of advanced "
+            "further when you run Advance Grades. Middle school programs might "
+            "set this to 8th; high school programs to 12th."
+        ))
+
+        btn_row = QHBoxLayout()
+        advance_btn = QPushButton("Advance Grades")
+        advance_btn.setMinimumHeight(36)
+        advance_btn.clicked.connect(self._advance_grades)
+        btn_row.addWidget(advance_btn)
+        btn_row.addStretch()
+        v.addLayout(btn_row)
+
+        v.addWidget(QLabel(
+            "Bulk-promote every student's grade by one, for the start of a new "
+            "school year. Students at the top grade above are archived instead "
+            "(graduated) rather than advanced past it. Typically run once a year."
+        ))
+        return group
+
+    def _on_top_grade_changed(self, _index):
+        self._config["top_grade"] = self.top_grade_combo.currentData()
+        try:
+            cfg.save_config(self._config)
+        except Exception:
+            pass
+
+    def _advance_grades(self):
+        students_page = self._find_students_page()
+        if students_page is None:
+            QMessageBox.warning(self, "Error", "Could not locate the Students page.")
+            return
+        students_page._advance_grades()
+
+    def _find_students_page(self):
+        from ui.students_page import StudentsPage
+        for w in QApplication.topLevelWidgets():
+            for _, page in getattr(w, "_items", []):
+                if isinstance(page, StudentsPage):
+                    return page
+        return None
 
     # ── Backup & Restore ──────────────────────────────────────────────────────
 
