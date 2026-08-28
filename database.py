@@ -531,6 +531,22 @@ def log_repair_return(instrument_db_id, notes="", invoice_path=""):
         )
 
 
+def add_repair_note(instrument_db_id, notes="", invoice_path=""):
+    """Log a repair note against an instrument without changing its status or checkout."""
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with get_connection() as conn:
+        instr = conn.execute(
+            "SELECT current_student_id FROM instruments WHERE id=?", (instrument_db_id,)
+        ).fetchone()
+        student_id = instr["current_student_id"] if instr else None
+        conn.execute(
+            "INSERT INTO checkout_history "
+            "(instrument_id, student_id, action, timestamp, notes, repair_invoice_path) "
+            "VALUES (?, ?, 'repair_note', ?, ?, ?)",
+            (instrument_db_id, student_id, now, notes or None, invoice_path or None),
+        )
+
+
 def get_instrument_ids_with_repair_invoices():
     with get_connection() as conn:
         rows = conn.execute(

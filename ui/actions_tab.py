@@ -17,6 +17,7 @@ ACTION_LABELS = {
     "check_in":        "Checked In",
     "needs_repair":    "Needs Repair",
     "out_for_repair":  "Out for Repair",
+    "repair_note":     "Repair Note",
     "repair_returned": "Returned from Repair",
     "summer_hold":     "Summer Hold",
 }
@@ -510,6 +511,7 @@ class ActionsTab(QWidget):
                 "check_in":        ("In",  "#0a1f0a", "#5caa5c", "#1a401a"),
                 "needs_repair":    ("NR",  "#200a0a", "#cc4444", "#3a1212"),
                 "out_for_repair":  ("Rep", "#200a0a", "#cc4444", "#3a1212"),
+                "repair_note":     ("Note", "#2a1608", "#e87d2f", "#4a2c10"),
                 "repair_returned": ("Ret", "#0a1f0a", "#5caa5c", "#1a401a"),
                 "summer_hold":     ("SH",  "#1a2a4a", "#7eb8f7", "#1a3666"),
             }

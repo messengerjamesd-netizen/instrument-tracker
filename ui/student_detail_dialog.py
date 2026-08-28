@@ -11,6 +11,7 @@ _ACTION_LABELS = {
     "check_in":       "Checked In",
     "needs_repair":   "Needs Repair",
     "out_for_repair": "Out for Repair",
+    "repair_note":    "Repair Note",
     "repair_returned":"Returned from Repair",
     "summer_hold":    "Summer Hold",
     "available":      "Marked Available",

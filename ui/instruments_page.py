@@ -154,6 +154,7 @@ class ChangeStatusDialog(QDialog):
     def __init__(self, instrument, parent=None):
         super().__init__(parent)
         self.add_student_requested = False
+        self.add_note_requested = False
         self.setWindowTitle("Change Instrument Status")
         self.setMinimumWidth(360)
 
@@ -186,6 +187,8 @@ class ChangeStatusDialog(QDialog):
         if instrument["status"] == "Checked Out":
             self._add_btn = btns.addButton("Add Another Student…", QDialogButtonBox.ActionRole)
             self._add_btn.clicked.connect(self._on_add_student)
+        self._note_btn = btns.addButton("Add Repair Note…", QDialogButtonBox.ActionRole)
+        self._note_btn.clicked.connect(self._on_add_note)
         btns.addButton(QDialogButtonBox.Ok)
         btns.addButton(QDialogButtonBox.Cancel)
         btns.accepted.connect(self._on_accept)
@@ -203,6 +206,10 @@ class ChangeStatusDialog(QDialog):
 
     def _on_add_student(self):
         self.add_student_requested = True
+        self.accept()
+
+    def _on_add_note(self):
+        self.add_note_requested = True
         self.accept()
 
     def _on_accept(self):
@@ -382,16 +389,24 @@ class BulkChangeStatusDialog(QDialog):
 # ── Repair return dialog ──────────────────────────────────────────────────────
 
 class RepairReturnDialog(QDialog):
-    """Confirm return from repair with optional invoice attachment and notes."""
+    """Confirm return from repair, or log a mid-repair note — same UI either way.
 
-    def __init__(self, instrument, parent=None):
+    mode="return" is the original "instrument came back from the shop" flow.
+    mode="note" logs a repair note without touching status/checkout state.
+    """
+
+    def __init__(self, instrument, parent=None, mode="return"):
         super().__init__(parent)
         self.invoice_path = ""
         self.notes = ""
+        self.mode = mode
 
         name = instrument["name"]
         serial = instrument["serial_number"] or "no serial"
-        self.setWindowTitle(f"Return from Repair — {name}")
+        if mode == "note":
+            self.setWindowTitle(f"Add Repair Note — {name}")
+        else:
+            self.setWindowTitle(f"Return from Repair — {name}")
         self.setMinimumWidth(480)
         self._build_ui(name, serial)
 
@@ -408,16 +423,27 @@ class RepairReturnDialog(QDialog):
 
         layout.addWidget(self._sep())
 
-        layout.addWidget(QLabel("Repair invoice / work slip (optional):"))
+        if self.mode == "note":
+            attach_label = "Photo of the repair (optional):"
+            cam_label = "📷  Photograph Repair"
+            upload_label = "📁  Upload Photo/File"
+            notes_placeholder = "What's being repaired, shop name, status update…"
+        else:
+            attach_label = "Repair invoice / work slip (optional):"
+            cam_label = "📷  Photograph Invoice"
+            upload_label = "📁  Upload Invoice File"
+            notes_placeholder = "What was repaired, cost, shop name, etc…"
+
+        layout.addWidget(QLabel(attach_label))
 
         inv_row = QHBoxLayout()
         self.inv_thumb = self._make_thumb()
         inv_btns = QVBoxLayout()
         inv_btns.setSpacing(4)
-        cam_btn = QPushButton("📷  Photograph Invoice")
+        cam_btn = QPushButton(cam_label)
         cam_btn.setMinimumHeight(34)
         cam_btn.clicked.connect(self._take_photo)
-        upload_btn = QPushButton("📁  Upload Invoice File")
+        upload_btn = QPushButton(upload_label)
         upload_btn.setMinimumHeight(34)
         upload_btn.clicked.connect(self._upload_file)
         inv_btns.addWidget(cam_btn)
@@ -433,14 +459,15 @@ class RepairReturnDialog(QDialog):
 
         layout.addWidget(QLabel("Repair notes:"))
         self.notes_edit = QPlainTextEdit()
-        self.notes_edit.setPlaceholderText("What was repaired, cost, shop name, etc…")
+        self.notes_edit.setPlaceholderText(notes_placeholder)
         self.notes_edit.setFixedHeight(70)
         layout.addWidget(self.notes_edit)
 
         layout.addWidget(self._sep())
 
         btns = QDialogButtonBox()
-        confirm_btn = btns.addButton("Mark Returned", QDialogButtonBox.AcceptRole)
+        confirm_text = "Save Note" if self.mode == "note" else "Mark Returned"
+        confirm_btn = btns.addButton(confirm_text, QDialogButtonBox.AcceptRole)
         confirm_btn.setObjectName("primary")
         btns.addButton("Cancel", QDialogButtonBox.RejectRole)
         btns.accepted.connect(self._confirm)
@@ -464,14 +491,16 @@ class RepairReturnDialog(QDialog):
         return lbl
 
     def _take_photo(self):
-        dlg = self._PhotoCaptureDialog(self, title="Photograph Repair Invoice")
+        title = "Photograph Repair" if self.mode == "note" else "Photograph Repair Invoice"
+        dlg = self._PhotoCaptureDialog(self, title=title)
         if dlg.exec() == QDialog.Accepted and dlg.captured_path:
             self.invoice_path = dlg.captured_path
             self._set_thumb(self.inv_thumb, dlg.captured_path)
 
     def _upload_file(self):
+        title = "Select Repair Photo/File" if self.mode == "note" else "Select Invoice File"
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select Invoice File", "",
+            self, title, "",
             "Images & PDFs (*.png *.jpg *.jpeg *.bmp *.tiff *.pdf);;All Files (*)"
         )
         if not path:
@@ -499,6 +528,10 @@ class RepairReturnDialog(QDialog):
 
     def _confirm(self):
         self.notes = self.notes_edit.toPlainText().strip()
+        if self.mode == "note" and not self.notes and not self.invoice_path:
+            QMessageBox.warning(self, "Nothing to Save",
+                                "Add a note or attach a photo/file.")
+            return
         self.accept()
 
 
@@ -847,6 +880,7 @@ class InstrumentsPage(QWidget):
         wide.addWidget(mk("Delete", self._delete_instrument, danger=True, fixed=True))
         wide.addWidget(sep())
         wide.addWidget(mk("Change Status", self._change_status))
+        wide.addWidget(mk("Add Repair Note", self._add_repair_note))
         wide.addWidget(mk("History / Contracts", self._view_details))
 
         self._narrow_bar = QWidget()
@@ -862,8 +896,12 @@ class InstrumentsPage(QWidget):
         row2.setSpacing(8)
         row2.addWidget(mk("Change Status", self._change_status))
         row2.addWidget(mk("History / Contracts", self._view_details))
+        row3 = QHBoxLayout()
+        row3.setSpacing(8)
+        row3.addWidget(mk("Add Repair Note", self._add_repair_note))
         narrow.addLayout(row1)
         narrow.addLayout(row2)
+        narrow.addLayout(row3)
         self._narrow_bar.hide()
 
         layout.addWidget(self._wide_bar)
@@ -1172,6 +1210,8 @@ class InstrumentsPage(QWidget):
         if instr["status"] == "Checked Out":
             menu.addSeparator()
             add_student_action = menu.addAction("Add Another Student…")
+        menu.addSeparator()
+        add_note_action = menu.addAction("Add Repair Note…")
         chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
         if not chosen:
             return
@@ -1180,6 +1220,9 @@ class InstrumentsPage(QWidget):
                 return
             self.refresh()
             self.status_changed.emit()
+            return
+        if chosen == add_note_action:
+            self._prompt_repair_note(instr)
             return
         new_status = chosen.text()
         if new_status == "Checked Out":
@@ -1222,6 +1265,15 @@ class InstrumentsPage(QWidget):
             dlg = ChangeStatusDialog(instr, self)
             dlg.status_combo.setCurrentText(new_status)
             if dlg.exec() != QDialog.Accepted:
+                return
+            if dlg.add_student_requested:
+                if not self._do_checkout(instr, add_student=True):
+                    return
+                self.refresh()
+                self.status_changed.emit()
+                return
+            if dlg.add_note_requested:
+                self._prompt_repair_note(instr)
                 return
             db.update_instrument_status(iid, new_status)
             db.log_repair_note(iid, new_status, dlg.get_repair_notes())
@@ -1516,6 +1568,10 @@ class InstrumentsPage(QWidget):
             self.status_changed.emit()
             return
 
+        if dlg.add_note_requested:
+            self._prompt_repair_note(instr)
+            return
+
         new_status = dlg.get_status()
 
         if new_status == "Checked Out":
@@ -1567,6 +1623,26 @@ class InstrumentsPage(QWidget):
 
         self.refresh()
         self.status_changed.emit()
+
+    def _add_repair_note(self):
+        iid = self._selected_instrument_id()
+        if iid is None:
+            QMessageBox.information(self, "No Selection", "Select an instrument first.")
+            return
+        instr = db.get_instrument_by_id(iid)
+        if not instr:
+            return
+        self._prompt_repair_note(instr)
+
+    def _prompt_repair_note(self, instr):
+        """Show the Add Repair Note dialog and save it if confirmed. Returns True if saved."""
+        note_dlg = RepairReturnDialog(instr, self, mode="note")
+        if note_dlg.exec() != QDialog.Accepted:
+            return False
+        db.add_repair_note(instr["id"], note_dlg.notes, note_dlg.invoice_path)
+        self.refresh()
+        self.status_changed.emit()
+        return True
 
     def _delete_instrument(self):
         iids = self._selected_instrument_ids()

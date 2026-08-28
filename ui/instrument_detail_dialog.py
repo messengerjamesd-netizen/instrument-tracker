@@ -191,6 +191,14 @@ class InstrumentDetailDialog(QDialog):
         layout.setContentsMargins(0, 8, 0, 0)
         layout.setSpacing(6)
 
+        top_bar = QHBoxLayout()
+        add_note_btn = QPushButton("+ Add Repair Note")
+        add_note_btn.setObjectName("primary")
+        add_note_btn.clicked.connect(self._add_repair_note)
+        top_bar.addWidget(add_note_btn)
+        top_bar.addStretch()
+        layout.addLayout(top_bar)
+
         self.history_table = QTableWidget()
         self.history_table.setColumnCount(5)
         self.history_table.setHorizontalHeaderLabels(
@@ -243,6 +251,7 @@ class InstrumentDetailDialog(QDialog):
             "check_in":        "Check In",
             "needs_repair":    "Needs Repair",
             "out_for_repair":  "Out for Repair",
+            "repair_note":     "Repair Note",
             "repair_returned": "Returned from Repair",
             "summer_hold":     "Summer Hold",
         }
@@ -309,6 +318,17 @@ class InstrumentDetailDialog(QDialog):
         if path and os.path.exists(path):
             dlg = PhotoPreviewDialog(path, "Contract Photo", self)
             dlg.exec()
+
+    def _add_repair_note(self):
+        from ui.instruments_page import RepairReturnDialog
+        instr = db.get_instrument_by_id(self.instrument_id)
+        if not instr:
+            return
+        dlg = RepairReturnDialog(instr, self, mode="note")
+        if dlg.exec() != QDialog.Accepted:
+            return
+        db.add_repair_note(self.instrument_id, dlg.notes, dlg.invoice_path)
+        self._load_history()
 
     def _view_repair_invoice(self):
         row = self.history_table.currentRow()
